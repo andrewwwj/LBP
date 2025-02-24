@@ -56,13 +56,13 @@ def build_dataset_statistics(dataset_path, cache_json_name='cache.json'):
         actions = []
         # check all data
         for file in tqdm(hdf5_files):
-            f = h5py.File(io.BytesIO(fileio.get(file)))
-            views = list(f['observation'].keys())
-            traj_actions = f['action'][()].astype('float32')
-            traj_proprios = f['proprio'][()].astype('float32')
-            actions.append(traj_actions)
-            proprios.append(traj_proprios)
-            traj_lens.append(traj_actions.shape[0])
+            with h5py.File(io.BytesIO(fileio.get(file)), 'r') as f:
+                views = list(f['observation'].keys())
+                traj_actions = f['action'][()].astype('float32')
+                traj_proprios = f['proprio'][()].astype('float32')
+                actions.append(traj_actions)
+                proprios.append(traj_proprios)
+                traj_lens.append(traj_actions.shape[0])
         # calculate statistics
         actions = np.concatenate(actions, axis=0)
         proprios = np.concatenate(proprios, axis=0)
@@ -138,22 +138,22 @@ class LiberoDataset(Dataset):
             self.metas.extend([(traj_paths[i], j) for j in range(traj_lens[i])])
 
     def _load_from_raw_traj(self, traj_path, cur_idx):
-        f = h5py.File(io.BytesIO(fileio.get(traj_path)))
-        # load images from all views
-        raw_images = []
-        for view in self.views:
-            raw_img = cv2.imdecode(f['observation'][view][cur_idx], cv2.IMREAD_COLOR)
-            raw_images.append(raw_img)
-        # load actions with chunking
-        np_action = f['action'][()][cur_idx : cur_idx + self.chunk_length]
-        if len(np_action) < self.chunk_length:
-            cnt = self.chunk_length - len(np_action)
-            padding = np.array([[0., 0., 0., 0., 0., 0., np_action[-1][-1]]]).repeat(cnt, axis=0)
-            np_action = np.concatenate([np_action, padding], axis=0)
-        # load proprio
-        raw_proprio = f['proprio'][()][cur_idx]
-        # load instruction
-        instruction = f['language_instruction'][()].decode('utf-8')
+        with h5py.File(io.BytesIO(fileio.get(traj_path)), 'r') as f:
+            # load images from all views
+            raw_images = []
+            for view in self.views:
+                raw_img = cv2.imdecode(f['observation'][view][cur_idx], cv2.IMREAD_COLOR)
+                raw_images.append(raw_img)
+            # load actions with chunking
+            np_action = f['action'][()][cur_idx : cur_idx + self.chunk_length]
+            if len(np_action) < self.chunk_length:
+                cnt = self.chunk_length - len(np_action)
+                padding = np.array([[0., 0., 0., 0., 0., 0., np_action[-1][-1]]]).repeat(cnt, axis=0)
+                np_action = np.concatenate([np_action, padding], axis=0)
+            # load proprio
+            raw_proprio = f['proprio'][()][cur_idx]
+            # load instruction
+            instruction = f['language_instruction'][()].decode('utf-8')
         return raw_images, np_action, raw_proprio, instruction
 
     def __len__(self):
