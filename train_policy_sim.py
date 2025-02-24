@@ -89,14 +89,14 @@ def train(config, logger, model, train_loader, optimizer, lr_scheduler):
         
         # calculate loss and update model
         loss, loss_metric = model(**batch)
-        loss_recod.update(loss.item())
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         lr_scheduler.step()
+        loss_recod.update(loss)
         
         # log training message
-        loss_metric.update({'iter': ep_iter, 'loss': loss_recod.value, 
+        loss_metric.update({'iter': ep_iter,
                             'smoothed_loss': loss_recod.avg,
                             'lr': lr_scheduler.get_last_lr()[0]})
         logger.log_metric(loss_metric)

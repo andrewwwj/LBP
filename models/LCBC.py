@@ -92,14 +92,14 @@ class BCPolicy(nn.Module):
         all_obs = self.forward_obs(cur_images, cur_proprios, conditions)
         loss = self.forward_policy(all_obs, cur_actions)
         # Note: 'loss' must be in the dict
-        return dict(loss = loss)
+        return loss, dict(loss=loss)
     
     def generate(self, cur_images, cur_proprios, instruction, **kwargs):
         conditions = self.forward_cond(instruction)
         all_obs = self.forward_obs(cur_images, cur_proprios, conditions)
         pred_actions = self.generate_policy(all_obs)
-        # Note: 'action' must be in the dict
-        return dict(action = pred_actions)
+        # Note: 'actions' must be in the dict
+        return pred_actions, dict(actions=pred_actions)
 
     def state_dict(self, *args, **kwargs):
         model_dict = super().state_dict(*args, **kwargs)

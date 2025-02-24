@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import time
 
-# TBD: wrapper should not change the output pattern of model
 class RoboModelWrapper(nn.Module):
     def __init__(self, model, device='cuda', dtype=torch.float32):
         super().__init__()
@@ -29,7 +28,7 @@ class RoboModelWrapper(nn.Module):
                 return input_data
         return {k: process_input(v) for k, v in inputs.items()}
     
-    def process_outputs(self, **outputs):
+    def process_outputs(self, key_output, **outputs):
         def process_output(output_data):
             if isinstance(output_data, torch.Tensor):
                 return output_data.detach().cpu()
@@ -39,23 +38,21 @@ class RoboModelWrapper(nn.Module):
                 return {k: process_output(v) for k, v in output_data.items()}
             else:
                 return output_data
-        return {k: process_output(v) for k, v in outputs.items()}
+        return process_output(key_output), {k: process_output(v) for k, v in outputs.items()}
 
     def forward(self, **inputs):
         self.train()
         processed_inputs = self.process_inputs(**inputs)
-        result = self.model(**processed_inputs)
-        # Note: 'loss' must be in the dict
-        return result['loss'], result
+        loss, loss_dict = self.model(**processed_inputs)
+        return loss, loss_dict
     
     def generate(self, **inputs):
         self.eval()
         processed_inputs = self.process_inputs(**inputs)
         with torch.no_grad():
-            result = self.model.generate(**processed_inputs)
-        result = self.process_outputs(**result)
-        # Note: 'action' must be in the dict
-        return result['action'], result
+            action, details = self.model.generate(**processed_inputs)
+        action, details = self.process_outputs(action, **details)
+        return action, details
 
 class DataLoaderWithTimeWrapper:
     def __init__(self, dataloader, total_iters=200000):
