@@ -5,7 +5,7 @@ export WANDB_API_KEY=a9abdbf33f19f62cbbd321e4498210cbaaf1efc0
 SEED=42
 NUM_PROCS=2
 BS_PER_PROC=32
-CURRENT_DATE="0223"
+CURRENT_DATE="0224"
 LIBERO_SUBSUITE="libero_10"
 
 # hyper
@@ -29,7 +29,7 @@ python -m torch.distributed.launch \
         --model_name $MODEL_NAME \
         --engine_name build_libero_engine \
         --dataset_path /dysData/nhy/datasets/libero/$LIBERO_SUBSUITE \
-        --img_size 256 \
+        --img_size 224 \
         --batch_size $BS_PER_PROC \
         --num_workers 8 \
         --use_ac True \
