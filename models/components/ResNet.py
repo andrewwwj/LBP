@@ -28,9 +28,10 @@ class ResNet(nn.Module):
     ):
         super().__init__(*args, **kwargs)
         if not pretraine_path :
-                pretraine_path = f"/dysData/nhy/.cache/huggingface/hub/models--timm--{model_name}.a1_in1k/pytorch_model.bin"
-            
-        self.model = timm.create_model(model_name, 
+            self.model = timm.create_model(model_name, 
+                                    pretrained=pretrained)
+        else :
+            self.model = timm.create_model(model_name, 
                                         pretrained=pretrained,
                                         pretrained_cfg_overlay=dict(file=pretraine_path))
 

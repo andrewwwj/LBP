@@ -18,8 +18,8 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 
-def build_base_transform(n_px, aug=False, to_tensor=True, apply_norm=True,
-                        crop_scale=(0.75,1.0), crop_ratio=(0.75, 1.33), crop_prob=0.8, flip_prob=0.5, jitter_prob=0.5, 
+def build_base_transform(n_px, aug=True, to_tensor=True, apply_norm=True,
+                        crop_scale=(0.75,1.0), crop_ratio=(0.75, 1.33), crop_prob=1.0, flip_prob=0.5, jitter_prob=0.5, 
                         jitter_bright=0.1, jitter_contrast=0, jitter_saturation=0, jitter_hue=0,
                         norm_mean = (0.485, 0.456, 0.406), norm_std=(0.229, 0.224, 0.225)):
     base_transform = []
@@ -31,7 +31,8 @@ def build_base_transform(n_px, aug=False, to_tensor=True, apply_norm=True,
         # base_transform.append(A.HorizontalFlip(p=flip_prob))
         base_transform.append(A.ColorJitter(brightness=jitter_bright, contrast=jitter_contrast, 
                                             saturation=jitter_saturation, hue=jitter_hue, p=jitter_prob))
-    base_transform.append(A.Resize(height=n_px, width=n_px))
+    else :
+        base_transform.append(A.Resize(height=n_px, width=n_px))
     # normalization
     if apply_norm:
         base_transform.append(A.Normalize(mean=norm_mean, std=norm_std, max_pixel_value=255.0, p=1.0))
@@ -89,7 +90,7 @@ class LiberoProcessor(object):
         self.action_length = 7
         self.proprio_length = 9
     
-    def _apply_transform(self, img, replay_params=None):
+    def preprocess_image(self, img, replay_params=None):
         if replay_params == None:
             transformed = self.img_transform(image=img)
             transformed_image = transformed['image']
@@ -98,10 +99,6 @@ class LiberoProcessor(object):
             transformed = A.ReplayCompose.replay(replay_params, image=img)
             transformed_image = transformed['image']
         return transformed_image, replay_params
-
-    def preprocess_image(self, np_image):
-        transformed_image, _ = self._apply_transform(np_image)
-        return transformed_image
     
     def preprocess_action(self, action):
         action = (action - self.action_min) / (self.action_max - self.action_min) * 2 - 1
@@ -121,11 +118,15 @@ class LiberoProcessor(object):
         action = (action + 1) / 2 * (self.action_max - self.action_min) + self.action_min
         return action.numpy()
 
+
 class LiberoDataset(Dataset):
-    def __init__(self, dataset_path, processor, chunk_length=4):
+    def __init__(self, dataset_path, processor, chunk_length=4, 
+                 recursive_step=4, rec_plan_coef=0.5):
+        self.processor = processor
         self.dataset_path = dataset_path
         self.chunk_length = chunk_length
-        self.processor = processor
+        self.recursive_step = recursive_step
+        self.rec_plan_coef = rec_plan_coef
         self._load_metas()
     
     def _load_metas(self):
@@ -133,17 +134,24 @@ class LiberoDataset(Dataset):
         traj_paths = dataset_statistics['traj_paths']
         traj_lens = dataset_statistics['traj_lens']
         self.views = dataset_statistics['views']
+        self.main_view = self.views[0]
         self.metas = []
         for i in range(len(traj_paths)):
-            self.metas.extend([(traj_paths[i], j) for j in range(traj_lens[i])])
+            self.metas.extend([(traj_paths[i], j, traj_lens[i]-1) for j in range(traj_lens[i])])
 
-    def _load_from_raw_traj(self, traj_path, cur_idx):
+    def _load_from_raw_traj(self, traj_path, cur_idx, goal_idx):
         with h5py.File(io.BytesIO(fileio.get(traj_path)), 'r') as f:
             # load images from all views
             raw_images = []
             for view in self.views:
                 raw_img = cv2.imdecode(f['observation'][view][cur_idx], cv2.IMREAD_COLOR)
                 raw_images.append(raw_img)
+            # load subgoals
+            subgoals = []
+            for i in range(self.recursive_step):
+                raw_img = cv2.imdecode(f['observation'][self.main_view][goal_idx], cv2.IMREAD_COLOR)
+                goal_idx = cur_idx + int((goal_idx - cur_idx) * self.rec_plan_coef)
+                subgoals.append(raw_img)
             # load actions with chunking
             np_action = f['action'][()][cur_idx : cur_idx + self.chunk_length]
             if len(np_action) < self.chunk_length:
@@ -154,18 +162,24 @@ class LiberoDataset(Dataset):
             raw_proprio = f['proprio'][()][cur_idx]
             # load instruction
             instruction = f['language_instruction'][()].decode('utf-8')
-        return raw_images, np_action, raw_proprio, instruction
+        return raw_images, subgoals, np_action, raw_proprio, instruction
 
     def __len__(self):
         return len(self.metas) 
     
     def __getitem__(self, index):
         meta = self.metas[index]
-        raw_images, np_action, raw_proprio, instruction = self._load_from_raw_traj(meta[0], meta[1])
-        final_images = torch.stack([self.processor.preprocess_image(image) for image in raw_images]) # V 3 H W
+        raw_images, subgoals, np_action, raw_proprio, instruction = self._load_from_raw_traj(meta[0], meta[1], meta[2])
+        cur_image, replay_params = self.processor.preprocess_image(raw_images[0])
+        final_images = [cur_image, *[self.processor.preprocess_image(img)[0] for img in raw_images[1:]]]
+        subgoals = [self.processor.preprocess_image(img, replay_params)[0] for img in subgoals]
+        final_images = torch.stack(final_images)
+        subgoals = torch.stack(subgoals)
+        
         final_action = self.processor.preprocess_action(np_action) # 42
         final_proprio = self.processor.preprocess_proprio(raw_proprio)
         item = {
+            'sub_goals': subgoals,
             'cur_images': final_images,
             'cur_actions': final_action,
             'cur_proprios': final_proprio,
@@ -191,7 +205,7 @@ class LiberoAgent(object):
     def _init_action_chunking(self, eval_horizon: int=600, num_samples: int=1):
         self.all_time_actions = np.ones([num_samples, eval_horizon, eval_horizon+50, 7]) * self.constant
     
-    def get_ac_action(self, actions, t: int, k: float=-0.25):
+    def get_ac_action(self, actions, t: int, k: float=0.25):
         B, N, D = actions.shape
         self.all_time_actions[:, [t], t:t+N] = np.expand_dims(actions, axis=1)   # B, horizon, horizon+ac_num, 7
         actions_for_curr_step = self.all_time_actions[:, :, t]  # B, horizon, 7
@@ -200,6 +214,7 @@ class LiberoAgent(object):
         exp_weights = np.exp(-k * np.arange(actions_for_curr_step.shape[1]))  # N, 1
         exp_weights = (exp_weights / exp_weights.sum()).reshape(1, -1, 1)
         actions = (actions_for_curr_step * exp_weights).sum(axis=1)
+        actions[..., -1] = np.sign(actions[..., -1])
         return actions
     
     def get_action(self, agent_view_images, wrist_view_images, raw_proprio, instruction, t=-1):
@@ -208,8 +223,8 @@ class LiberoAgent(object):
         # raw_proprio B 9
         # instruction ['xxx', ..., 'xxx']
 
-        agent_view_images = torch.stack([self.processor.preprocess_image(image) for image in agent_view_images]).unsqueeze(1)
-        wrist_view_images = torch.stack([self.processor.preprocess_image(image) for image in wrist_view_images]).unsqueeze(1)
+        agent_view_images = torch.stack([self.processor.preprocess_image(image)[0] for image in agent_view_images]).unsqueeze(1)
+        wrist_view_images = torch.stack([self.processor.preprocess_image(image)[0] for image in wrist_view_images]).unsqueeze(1)
         final_images = torch.cat([agent_view_images, wrist_view_images], dim=1)
         final_proprio = torch.stack([self.processor.preprocess_proprio(proprio) for proprio in raw_proprio])
         batch = {
@@ -232,11 +247,12 @@ def build_libero_processor(dataset_path, img_size=224, training=True):
     processor = LiberoProcessor(dataset_path=dataset_path, img_size=img_size, training=training)
     return processor
 
-def build_libero_dataloader(dataset_path, processor, chunk_length=6,
+def build_libero_dataloader(dataset_path, processor, chunk_length=6, recursive_step=4, rec_plan_coef=0.5,
                         batch_size=2, num_workers=2, shuffle=True, pin_mem=True, drop_last=True, 
                         world_size=1, global_rank=0):
     
-    train_dataset = LiberoDataset(dataset_path=dataset_path, processor=processor, chunk_length=chunk_length)
+    train_dataset = LiberoDataset(dataset_path=dataset_path, processor=processor, chunk_length=chunk_length,
+                                  recursive_step=recursive_step, rec_plan_coef=rec_plan_coef)
     sampler = DistributedSampler(train_dataset, shuffle=shuffle, num_replicas=world_size, rank=global_rank) 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=num_workers,
                                  sampler=sampler, pin_memory=pin_mem, drop_last=drop_last)
@@ -247,6 +263,7 @@ def build_libero_agent(processor, use_ac=True):
     return agent
 
 def build_libero_engine(dataset_path, img_size=224, # processor
+                        recursive_step=4, rec_plan_coef=0.5, # dataloader
                         chunk_length=6, batch_size=2, num_workers=2, # dataloader
                         shuffle=True, pin_mem=True, drop_last=True, # dataloader
                         world_size=1, global_rank=0, # dataloader
@@ -254,9 +271,11 @@ def build_libero_engine(dataset_path, img_size=224, # processor
                         **kwargs):
     
     processor = build_libero_processor(dataset_path, img_size=img_size, training=True)
-    train_dataloader = build_libero_dataloader(dataset_path, processor=processor, chunk_length=chunk_length,
-                        batch_size=batch_size, num_workers=num_workers, shuffle=shuffle, pin_mem=pin_mem, drop_last=drop_last, 
-                        world_size=world_size, global_rank=global_rank)
+    train_dataloader = build_libero_dataloader(dataset_path, processor=processor, chunk_length=chunk_length, 
+                                               recursive_step=recursive_step, rec_plan_coef=rec_plan_coef,
+                                               batch_size=batch_size, num_workers=num_workers, 
+                                               shuffle=shuffle, pin_mem=pin_mem, drop_last=drop_last, 
+                                               world_size=world_size, global_rank=global_rank)
     processor = build_libero_processor(dataset_path, img_size=img_size, training=False)
     agent = build_libero_agent(processor=processor, use_ac=use_ac)
     return train_dataloader, agent

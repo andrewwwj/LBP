@@ -32,7 +32,9 @@ def get_args_parser():
     parser.add_argument('--output_dir', default='runnings/')
     parser.add_argument('--gpus', default='0,1', help='List of available gpus')
     parser.add_argument('--chunk_length', default=6, type=int) # shared by engine and model
-    
+    parser.add_argument('--recursive_step', default=1, type=int) # shared by engine and model
+    parser.add_argument('--rec_plan_coef', default=0.5, type=float)
+
     # Training Setting (essential)
     parser.add_argument('--learning_rate', '-lr', type=float, default=3e-4, help='learning rate (default: 3e-4)')
     parser.add_argument('--weight_decay', '-wd', default=0, type=float, help='Weight decay (default: 0)')
@@ -45,12 +47,11 @@ def get_args_parser():
 
     # Model Setting
     parser.add_argument('--model_name', default="bc_policy_res18_libero", type=str)
-    parser.add_argument('--recursive_step', default=-1, type=int)
 
     # Engine Setting
     parser.add_argument('--engine_name', default="build_libero_engine", type=str)
     parser.add_argument('--dataset_path', default="~/datasets/libero/libero_10", type=str)
-    parser.add_argument('--img_size', default=256, type=int)
+    parser.add_argument('--img_size', default=224, type=int)
     parser.add_argument('--batch_size', default=16, type=int)
     parser.add_argument('--num_workers', default=8, type=int)
     parser.add_argument('--shuffle', default=True, type=lambda x: x.lower() == 'true')
