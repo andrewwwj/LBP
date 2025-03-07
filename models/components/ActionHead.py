@@ -44,7 +44,7 @@ def extract(a, x_shape):
     b, *_ = a.shape
     return a.reshape(b, *((1,) * (len(x_shape) - 1)))
 
-class DDPMPolicy(nn.Module):
+class DDPMHead(nn.Module):
     def __init__(
         self, 
         action_size: int = 7,
@@ -145,7 +145,7 @@ class DDPMPolicy(nn.Module):
             xtm1 = torch.clip(xtm1, -1., 1.)
         return xtm1
 
-class BasePolicy(nn.Module):
+class BaseHead(nn.Module):
     def __init__(
         self, 
         action_size: int = 7,

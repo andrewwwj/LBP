@@ -47,6 +47,7 @@ def get_args_parser():
 
     # Model Setting
     parser.add_argument('--model_name', default="bc_policy_res18_libero", type=str)
+    parser.add_argument('--imaginator_ckpt_path', default="runnings/mid_planner_libero_dnce/Model_ckpt_100000.pth", type=str)
 
     # Engine Setting
     parser.add_argument('--engine_name', default="build_libero_engine", type=str)

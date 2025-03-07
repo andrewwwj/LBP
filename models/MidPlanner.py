@@ -4,7 +4,7 @@ import torch.nn as nn
 import DecisionNCE
 import random
 import pickle
-from .components.MlpResNet import MlpResNet
+
 
 def init_weight(m):
     if isinstance(m, nn.Linear):

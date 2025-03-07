@@ -1,13 +1,10 @@
-from .LCBC import bc_policy_res18_libero, bc_policy_res34_libero, bc_policy_ddpm_res18_libero, bc_policy_ddpm_res34_libero
 from .MidPlanner import mid_planner_dnce_noise
-
+from .LBP import lbp_policy_ddpm_res18_libero, lbp_policy_ddpm_res34_libero
 
 MODEL_REPO = {
-    'bc_policy_res18_libero': bc_policy_res18_libero,
-    'bc_policy_res34_libero': bc_policy_res34_libero,
-    'bc_policy_ddpm_res18_libero': bc_policy_ddpm_res18_libero,
-    'bc_policy_ddpm_res34_libero': bc_policy_ddpm_res34_libero,
-    'mid_planner_dnce_noise': mid_planner_dnce_noise
+    'mid_planner_dnce_noise': mid_planner_dnce_noise,
+    'lbp_policy_ddpm_res18_libero': lbp_policy_ddpm_res18_libero,
+    'lbp_policy_ddpm_res34_libero': lbp_policy_ddpm_res34_libero
 }
 
 def create_model(model_name, **kwargs):

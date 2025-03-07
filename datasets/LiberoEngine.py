@@ -29,8 +29,8 @@ def build_base_transform(n_px, aug=True, to_tensor=True, apply_norm=True,
                                                   scale=crop_scale, ratio=crop_ratio))
         # base_transform.append(A.VerticalFlip(p=flip_prob))
         # base_transform.append(A.HorizontalFlip(p=flip_prob))
-        base_transform.append(A.ColorJitter(brightness=jitter_bright, contrast=jitter_contrast, 
-                                            saturation=jitter_saturation, hue=jitter_hue, p=jitter_prob))
+        # base_transform.append(A.ColorJitter(brightness=jitter_bright, contrast=jitter_contrast, 
+        #                                     saturation=jitter_saturation, hue=jitter_hue, p=jitter_prob))
     else :
         base_transform.append(A.Resize(height=n_px, width=n_px))
     # normalization
@@ -120,7 +120,7 @@ class LiberoProcessor(object):
 
 
 class LiberoDataset(Dataset):
-    def __init__(self, dataset_path, processor, chunk_length=4, 
+    def __init__(self, dataset_path, processor, chunk_length=6, 
                  recursive_step=4, rec_plan_coef=0.5):
         self.processor = processor
         self.dataset_path = dataset_path
@@ -479,7 +479,7 @@ class LIBEROEval():
         for env in self.env:
             env['env'].close()
 
-def eval_libero(agent, result_path, num_episodes=20, seed=42,
+def eval_libero(agent, result_path, num_episodes=10, seed=42,
                 task_suites=["libero_goal", "libero_spatial", "libero_10"]):
 
     result_dict = {}
