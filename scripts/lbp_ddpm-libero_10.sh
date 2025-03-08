@@ -9,10 +9,11 @@ CURRENT_DATE="0308"
 LIBERO_SUBSUITE="libero_10"
 
 # hyper
-PORT=29500
-AVAILABLE_GPUS="5"
-MODEL_NAME="bc_policy_ddpm_res34_libero"
-EXPERIMENT_NAME="runnings/${CURRENT_DATE}-${MODEL_NAME}-${LIBERO_SUBSUITE}-bs_$((NUM_PROCS*BS_PER_PROC))-seed_${SEED}"
+PORT=29504
+AVAILABLE_GPUS="3"
+MODEL_NAME="lbp_policy_ddpm_res34_libero"
+RECURSIVE_PLANNING_STEP=4
+EXPERIMENT_NAME="runnings/${CURRENT_DATE}-${MODEL_NAME}-rec_${RECURSIVE_PLANNING_STEP}-${LIBERO_SUBSUITE}-bs_$((NUM_PROCS*BS_PER_PROC))-seed_${SEED}"
 
 python -m torch.distributed.launch \
     --nproc_per_node=${NUM_PROCS} \
@@ -39,3 +40,5 @@ python -m torch.distributed.launch \
         --save_interval 50000 \
         --warm_steps 2000 \
         --log_interval 50 \
+        --recursive_step $RECURSIVE_PLANNING_STEP \
+        --imaginator_ckpt_path /home/ldx/LBP/runnings/0307-mid_planner_libero_dnce-bs_64-seed_42/Model_ckpt_100000.pth

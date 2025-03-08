@@ -5,7 +5,6 @@ import DecisionNCE
 import random
 import pickle
 
-
 def init_weight(m):
     if isinstance(m, nn.Linear):
         nn.init.kaiming_normal_(m.weight)
@@ -76,7 +75,7 @@ class MidImaginator(nn.Module):
     def __init__(
         self, 
         latent_dim = 1024, 
-        max_recursive_step = 4,
+        recursive_step = 4,
         state_random_noise = True,
         state_noise_strength = 0.1,
         loss_func = nn.MSELoss,
@@ -85,7 +84,7 @@ class MidImaginator(nn.Module):
     ):
         super().__init__()
         self.latent_dim = latent_dim
-        self.max_recursive_step = max_recursive_step
+        self.recursive_step = recursive_step
         self.state_random_noise = state_random_noise
         self.state_noise_strength = state_noise_strength
         self.loss_func = loss_func(**loss_func_conig)
@@ -107,14 +106,14 @@ class MidImaginator(nn.Module):
         
         random_number = random.random()
         if random_number < 0.5:
-            for i in range(1, self.max_recursive_step):
+            for i in range(1, self.recursive_step):
                 # latent planners
                 last_subgoal = pred_goal
                 target_subgoal = sub_goals[:, i, ...]
                 pred_goal = self.latent_planner(s0, last_subgoal, sg)
                 loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_goal, target_subgoal)
         else :
-            for i in range(1, self.max_recursive_step):
+            for i in range(1, self.recursive_step):
                 # latent planners
                 last_subgoal = sub_goals[:, i-1, ...]
                 target_subgoal = sub_goals[:, i, ...]
@@ -128,11 +127,11 @@ class MidImaginator(nn.Module):
         loss_dict['loss'] = loss
         return loss, loss_dict
     
-    def generate(self, cur_images, instruction, **kwargs):
+    def generate(self, cur_images, instruction, recursive_step, **kwargs):
         sg = self.latent_proj.lang_proj(instruction)
         s0 = self.latent_proj.img_proj(cur_images[:, 0, ...])
         planned_subgoals = [self.goal_rec(s0, sg)]
-        for i in range(1, self.max_recursive_step):
+        for i in range(1, recursive_step):
             pred_goal = self.latent_planner(s0, planned_subgoals[-1], sg)
             planned_subgoals.append(pred_goal)
         planned_subgoals = torch.cat([x.unsqueeze(1) for x in planned_subgoals], dim=1)
@@ -140,5 +139,5 @@ class MidImaginator(nn.Module):
 
 
 def mid_planner_dnce_noise(recursive_step=4, **kwargs):
-    return MidImaginator(max_recursive_step = recursive_step, state_random_noise = True, state_noise_strength = 0.1,
+    return MidImaginator(recursive_step = recursive_step, state_random_noise = True, state_noise_strength = 0.1,
                         loss_func = nn.MSELoss, loss_func_conig = dict(reduction='mean'), latent_info_file='asset/libero.pkl')

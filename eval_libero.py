@@ -5,10 +5,10 @@ from datasets import create_engine, eval_libero
 from utils import RoboModelWrapper
 import json
 
-torch.cuda.set_device(3)
+torch.cuda.set_device(5)
 task_suites = ['libero_10']
-task_name = '0223-bc_policy_res34_libero-libero_10-bs_64-seed_42'
-path = f'/dysData/nhy/LBP/runnings/{task_name}'
+task_name = '0308-lbp_policy_ddpm_res34_libero-rec_2-libero_10-bs_64-seed_42'
+path = f'/home/ldx/LBP/runnings/{task_name}'
 
 files = os.listdir(path)
 for file in files:

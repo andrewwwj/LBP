@@ -30,13 +30,12 @@ class LBPPolicy(nn.Module):
         decoder_head = 'base',
         loss_func = nn.MSELoss,
         loss_func_conig = dict(reduction='mean'),
-        recursive_step = 4,
-        max_recursive_step = 4,
+        recursive_step = 2,
         num_attn_layers = 3,
     ):
         super().__init__()
         # condition encoder
-        self.imaginator = mid_planner_dnce_noise(recursive_step=max_recursive_step)
+        self.imaginator = mid_planner_dnce_noise(recursive_step=4)
         self.imaginator.load_state_dict(torch.load(imaginator_ckpt_path, map_location='cpu'), strict=True)
         self.imaginator.requires_grad_(False)
         self.recursive_step = recursive_step
@@ -69,7 +68,7 @@ class LBPPolicy(nn.Module):
         self.loss_func = loss_func(**loss_func_conig)
 
     def forward_cond(self, cur_images, instruction):
-        planned_subogals, details = self.imaginator.generate(cur_images, instruction)
+        planned_subogals, details = self.imaginator.generate(cur_images, instruction, self.recursive_step)
         lang_embeding = details['lang_latent']
         cur_query = details['img_latent']
         fused_goal = self.goal_fusion(cur_query.unsqueeze(1), planned_subogals).squeeze(1)
@@ -116,13 +115,13 @@ class LBPPolicy(nn.Module):
     
 
 
-def lbp_policy_ddpm_res18_libero(imaginator_ckpt_path, chunk_length=6, recursive_step=4, **kwargs):
+def lbp_policy_ddpm_res18_libero(imaginator_ckpt_path, chunk_length=6, recursive_step=2, **kwargs):
     return LBPPolicy(proprio_input_dim=9, proprio_hidden_dim=32, vision_backbone_name="resnet18", decoder_head='ddpm',
-                    max_recursive_step=4, num_attn_layers=3, recursive_step=recursive_step, imaginator_ckpt_path=imaginator_ckpt_path,
+                    num_attn_layers=3, recursive_step=recursive_step, imaginator_ckpt_path=imaginator_ckpt_path,
                     policy_num_blocks=3, policy_hidden_dim=256, action_size=7, chunk_length=chunk_length)
 
 
-def lbp_policy_ddpm_res34_libero(imaginator_ckpt_path, chunk_length=6, recursive_step=4, **kwargs):
+def lbp_policy_ddpm_res34_libero(imaginator_ckpt_path, chunk_length=6, recursive_step=2, **kwargs):
     return LBPPolicy(proprio_input_dim=9, proprio_hidden_dim=32, vision_backbone_name="resnet34", decoder_head='ddpm',
-                    max_recursive_step=4, num_attn_layers=3, recursive_step=recursive_step, imaginator_ckpt_path=imaginator_ckpt_path,
+                    num_attn_layers=3, recursive_step=recursive_step, imaginator_ckpt_path=imaginator_ckpt_path,
                     policy_num_blocks=3, policy_hidden_dim=256, action_size=7, chunk_length=chunk_length)

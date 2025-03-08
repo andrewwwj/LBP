@@ -3,13 +3,13 @@ export WANDB_API_KEY=a9abdbf33f19f62cbbd321e4498210cbaaf1efc0
 
 # fix
 SEED=42
-NUM_PROCS=1
-BS_PER_PROC=64
+NUM_PROCS=2
+BS_PER_PROC=32
 CURRENT_DATE="0307"
 
 # hyper
 PORT=26501
-AVAILABLE_GPUS="4"
+AVAILABLE_GPUS="4,5"
 MODEL_NAME="mid_planner_dnce_noise"
 EXPERIMENT_NAME="runnings/${CURRENT_DATE}-mid_planner_libero_dnce-bs_$((NUM_PROCS*BS_PER_PROC))-seed_${SEED}"
 
