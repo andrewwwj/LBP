@@ -43,7 +43,7 @@ class TriplePathPredictor(nn.Module):
 class DnceLatentProj(nn.Module):
     def __init__(
         self,
-        latent_info_file='asset/libero.pkl'
+        latent_info_file='assets/libero.pkl'
     ):
         super().__init__()
         self.latent_proj = DecisionNCE.load("DecisionNCE-RoboMutual", device="cuda")
@@ -80,7 +80,7 @@ class MidImaginator(nn.Module):
         state_noise_strength = 0.1,
         loss_func = nn.MSELoss,
         loss_func_conig = dict(reduction='mean'),
-        latent_info_file='asset/libero.pkl'
+        latent_info_file='assets/libero.pkl'
     ):
         super().__init__()
         self.latent_dim = latent_dim
@@ -140,4 +140,4 @@ class MidImaginator(nn.Module):
 
 def mid_planner_dnce_noise(recursive_step=4, **kwargs):
     return MidImaginator(recursive_step = recursive_step, state_random_noise = True, state_noise_strength = 0.1,
-                        loss_func = nn.MSELoss, loss_func_conig = dict(reduction='mean'), latent_info_file='asset/libero.pkl')
+                        loss_func = nn.MSELoss, loss_func_conig = dict(reduction='mean'), latent_info_file='assets/libero.pkl')

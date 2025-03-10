@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+
+<html>
+  
+<head>
+  <title>Efficient Robotic Policy Learning via Latent Space Backward Planning</title>
+  
+  <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        .hidden {
+            display: none;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <meta charset="utf-8">
+    <meta name="description"
+        content="Efficient Robotic Policy Learning via Latent Space Backward Planning">
+    <meta name="keywords" content="Robo-MUTUAL, Multimodal Task Specification, Embodied AI, AI">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Efficient Robotic Policy Learning via Latent Space Backward Planning</title>
+
+    <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro" rel="stylesheet">
+
+    <link rel="stylesheet" href="./assets/css/color.css">
+    <link rel="stylesheet" href="./assets/css/custom.css">
+    <link rel="stylesheet" href="./assets/css/bulma.min.css">
+    <link rel="stylesheet" href="./assets/css/bulma-carousel.min.css">
+    <link rel="stylesheet" href="./assets/css/bulma-slider.min.css">
+    <link rel="stylesheet" href="./assets/css/fontawesome.all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+
+    <script defer src="./assets/js/fontawesome.all.min.js"></script>
+    
+</head>
+
+<body>
+  
+
+<section class="hero">
+    <div class="hero-body">
+        <div class="container is-max-desktop">
+          
+        <div class="columns is-centered">
+          
+            <div class="column has-text-centered">
+
+            <br>
+            <h1 class="title is-1 publication-title is-bold">
+                Efficient Robotic Policy Learning via <br><u><b>L</b></u>atent Space <u><b>B</b></u>ackward <u><b>P</b></u>lanning
+            </h1>
+            <br>
+            <h3 class="subtitle is-4 is-bold">
+                Anonymous Authors
+            </h3>
+            
+            <br>
+
+            </div>
+    
+            </div>
+            </div>
+        </div>
+        </div>
+    </div>
+</section>
+  
+  <style>
+    /* 移除默认的 margin 和 padding */
+    section {
+      margin: 0;
+      padding: 0;
+    }
+  
+    /* 调整 .hero 和 .teaser 之间的空白 */
+    .hero {
+      margin-bottom: 40px; /* 缩小与下一个 section 的空白 */
+    }
+  
+    .teaser {
+      margin-top: 1px; /* 缩小与上一个 section 的空白 */
+    }
+
+    .hero-body, .container, .columns, .column {
+        margin-top: 0;
+        padding-top: 0;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+  
+    /* Accepted by 部分的样式 */
+    .accepted {
+      text-align: center;
+      color: #0a283d;
+      font-size: 24px;
+      background-color: #e8f0fe79;
+      border: 1px solid #B6D4FE;
+      border-radius: 10px;
+      padding: 20px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+
+      /* 为视频容器添加样式 */
+    .video-container {
+        border: 2px solid #66ccff; /* 边框宽度和颜色 */
+        border-radius: 30px; /* 边框圆角 */
+        overflow: hidden; /* 确保视频不会超出边框 */
+        display: inline-block; /* 使容器大小适应视频 */
+        margin-bottom: 10px; /* 调整视频和下方内容之间的空白 */
+        margin-top: 0px;
+    }
+
+    /* 确保视频宽度为100% */
+    #matting-video {
+        width: 100%;
+        display: block; /* 移除默认的inline-block间隙 */
+    }
+  </style>
+
+
+<section class="section">
+    <div class="container" style="margin-bottom: 2vh;">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <h1 class="title is-2">Abstract</h1>
+          
+          <div class="content has-text-justified">
+            <p>
+                Current robotic planning methods often rely on <b>predicting multi-frame images with full pixel details</b>. 
+                While this fine-grained approach can serve as a generic world model, it introduces <b>two significant challenges</b>
+                for downstream policy learning: <b>substantial computational costs</b> that hinder real-time deployment, and <b>accumulated inaccuracies</b> 
+                that can mislead action extraction. Planning with coarse-grained subgoals partially alleviates efficiency issues. 
+                However, their forward planning schemes can still result in <b>off-task predictions</b> due to accumulation errors, 
+                leading to misalignment with long-term goals. This raises a critical question: Can robotic planning be both efficient and accurate enough 
+                for real-time control in long-horizon, multi-stage tasks?
+                To address this, we propose a <b>L</b>atent space <b>B</b>ackward <b>P</b>lanning scheme (<b>LBP</b>), 
+                which begins by grounding the task into <b>final latent goals</b>, followed by recursively predicting <b>intermediate subgoals</b> closer to the current state. 
+                The grounded final goal enables backward subgoal planning to always remain aware of task completion, 
+                facilitating <b>on-task prediction</b> along the entire planning horizon. 
+                The subgoal-conditioned policy incorporates a learnable token to summarize the subgoal sequences and determines how each subgoal <b>guides action extraction</b>.
+                Through extensive simulation and real-robot <b>long-horizon</b> experiments, 
+                we show that LBP outperforms existing fine-grained and forward planning methods, achieving <b>SOTA</b> performance.
+            </p>
+          </div>
+        </div>
+      </div>
+  </div>
+</section>
+
+
+<section class="section">
+    <div class="container">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+            <h1 class="title is-2">Illustration of latent space backward planning</h1>
+          <div class="content has-text-justified">
+        <div class="column">
+          <div class="content has-text-justified">
+          
+          <div class="content has-text-centered">
+            <img src="./assets/web/LBP_intro.jpg" alt="algebraic reasoning" class="center" style="width: 60%;">
+          </div>
+          <p style="text-align: center;"> <i>Figure 1.</i>  Illustration of latent space backward planning.</p>
+          </div></div></div></div></div>
+</section>
+
+
+<section class="section">
+    <div class="container">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+            <h1 class="title is-2">Overall framework architecture of LBP</h1>
+          <div class="content has-text-justified">
+        <div class="column">
+          <div class="content has-text-justified">
+          
+          <div class="content has-text-centered">
+            <img src="./assets/web/lbp_arch.png" alt="algebraic reasoning" class="center" style="width: 80%;">
+          </div>
+          <p style="text-align: center;"> <i>Figure 2.</i>  Overall framework architecture of LBP.</p>
+          </div></div></div></div></div>
+</section>
+
+<style>
+    .expandable-container {
+        margin: 20px;
+    }
+
+    .title-container {
+        display: flex;
+        align-items: center;
+        cursor: pointer; /* 鼠标悬停时显示为可点击 */
+    }
+
+    .title-container::before {
+        content: "";
+        display: inline-block;
+        width: 0;
+        height: 0;
+        border-top: 10px solid transparent;
+        border-bottom: 10px solid transparent;
+        border-left: 15px solid #2e6aff; /* 初始向右的三角形 */
+        margin-right: 10px;
+        transition: transform 0.3s ease; /* 平滑过渡 */
+    }
+
+    .title-container.expanded::before {
+        transform: rotate(90deg); /* 展开时旋转为向下的三角形 */
+    }
+
+    .content {
+        display: block;
+        margin-top: 10px;
+        border-radius: 5px;
+    }
+
+    .content.visible {
+        display: block; /* 显示内容 */
+    }
+
+    .hidden_content {
+        display: none;
+        margin-top: 10px;
+        border-radius: 5px;
+    }
+
+    .hidden_content.visible {
+        display: block; /* 显示内容 */
+    }
+
+</style>
+
+<script>
+    function toggleContent(contentId, titleId) {
+        const content = document.getElementById(contentId);
+        const titleContainer = document.getElementById(titleId);
+
+        // 切换内容显示/隐藏
+        content.classList.toggle('visible');
+
+        // 切换三角形方向
+        titleContainer.classList.toggle('expanded');
+    }
+</script>
+
+
+<section class="section">
+    <div class="container">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+            <h1 class="title is-2">Real world experiments</h1>
+            <br>
+
+            <div class="expandable-container">
+                <div class="title-container" onclick="toggleContent('content1', 'title1')" id="title1">
+                    <h2 class="title is-3">Experimental setup and task definitions</h2>
+                </div>
+                <div class="hidden_content" id="content1">
+
+                    <p style="text-align: left;">
+                        To investigate the effectiveness of LBP in real world, we specifically design four long-horizon tasks: <b>Stack 3 cups</b>, <b>Move cups</b>, <b>Stack 4 cups</b> and <b>Shift cups</b>. 
+                        Each task is decomposed into multiple sequential stages, as shown in Figure 3, requiring the robot to perform fundamental pick-and-place operations. 
+                        These tasks establish a critical dependency where progress in subsequent stages is contingent on successful execution of preceding ones.
+                        We assess task performance using a stage-based scoring system with discrete values <b>{0, 25, 50, 75, 100}</b> for each stage, where each score corresponds to the completion progress of the current stage.
+                        A stage is assigned <b>100</b> only upon successful completion of the entire stage. In Figure 4, we present the quantitative comparison on the real-world tasks.</p>
+                    <br>
+                        <img src="./assets/web/lbp_setting.png" alt="algebraic reasoning" class="center" style="width: 100%;">
+                    <p style="text-align: left;">
+                        <i>Figure 3.</i> <b>Left:</b> the entire desktop environment setups of real-world experiments contains a 6 DoF AIRBOT arm and three Logitech cameras with different views; 
+                        <b>Right:</b> (1) <i>Move cups</i> move both brown cups in front of the white ones; 
+                        (2) <i>Stack cups:</i> stack all paper cups together;
+                        (3) <i>Shift cups:</i> shift all the paper cups to another plate, in a clockwise direction.
+                    </p>
+                    <br>
+                        <img src="./assets/web/lbp_real.png" alt="algebraic reasoning" class="center" style="width: 100%;">
+                      <p style="text-align: left;">
+                        <i>Figure 4.</i> <b>Real-world main results.</b> We evaluate LCBC, GLCBC, SuSIE and LBP in aforementioned 4 tasks. 
+                        For each task, we present the average performance of last-3 checkpoints.
+                        The metric "Avg. Score" measures the average score for each stage. 
+                        We observe that while LBP slightly outperforms other strong baselines at the early stages, 
+                        LBP wins by a fairly large margin at the final stages of all tasks.
+                         This shows LBP significantly excels in handling long-horizon tasks.
+                    </p>
+                </div>
+            </div>
+        
+
+            <div class="expandable-container">
+                <div class="title-container" onclick="toggleContent('content2', 'title2')" id="title2">
+                    <h2 class="title is-3">Comparison to forward planning</h2>
+                </div>
+                <div class="hidden_content" id="content2">
+                        <p style="text-align: left;">
+                            To verify the effectiveness of the backward planning approach, we train conventional forward planners \( f(z_{t+k}|z_t,\phi_l) \) and \( f(z_{t+nk}|z_t,z_{t+(n-1)k},\phi_l), n=2,\cdots \) with the same network architecture for fair comparison. While our planners progressively predict subgoals \( z_{g}, w_1, w_2, \dots, w_n \) in a backward manner, the forward planners predict the subgoal \( k=10 \) steps ahead at a time, sequentially generating latent subgoals \( z_{10}, z_{20}, \dots,z_{10n} \). We randomly sample one trajectory from each real-world AIRBOT task and calculate the Mean Squared Error (MSE) between the predicted subgoals and their corresponding ground truths for both planners as presented in Figure 5.
+                        </p><br>
+                        <img src="./assets/web/forward_error.png" alt="algebraic reasoning" class="center" style="width: 100%;">
+                        <p style="text-align: left;">
+                            <i>Figure 5.</i> Mean Squared Errors (MSE) between predicted subgoals and corresponding ground truths in forward and backward planning.
+                        </p>
+                        <br>
+                        <p style="text-align: left;">
+                            It can be observed that the compounding errors of forward planning grow rapidly across all tasks; for the most challenging task "Shift cups", the error becomes unbearable when predicting distant subgoals. 
+                            Even more concerning is that some existing methods attempt to predict continuous frames of future images, which would exacerbate these issues further.
+                            In contrast, our method maintains an extremely low error throughout the entire planning horizon. These results highlight the advantage of our backward planning strategy, which enables accurate subgoal predictions using only a few subgoals throughout the entire trajectory. LBP not only ensures efficient prediction but also effectively reduces compounding errors, in contrast to forward planning, which requires many predictions and suffers from significant accumulated errors.
+                        <br>
+                </div>
+            </div>
+
+            <br>
+            <br>
+            <h3 style="text-align: center" class="title is-3">Raw video of long horizon task performance</h3>
+            <div class="column">
+                <h3 style="text-align: center" class="title is-4">Stack 3 cups</h3>
+                <div class="content has-text-justified">
+                </div>
+                    <video id="dollyzoom" autoplay controls muted loop playsinline width="32.5%" height="100%">
+                        <source src="./assets/web/real/task_0_view0.mp4"
+                                type="video/mp4">
+                    </video>
+                    <video id="dollyzoom" autoplay controls muted loop playsinline width="32.5%" height="100%">
+                        <source src="./assets/web/real/task_0_view1.mp4"
+                                type="video/mp4">
+                    </video>
+                    <video id="dollyzoom" autoplay controls muted loop playsinline width="32.5%" height="100%">
+                        <source src="./assets/web/real/task_0_view2.mp4"
+                                type="video/mp4">
+                    </video>
+                <br><br>
+                </div>
+
+                <div class="column">
+                    <h3 style="text-align: center" class="title is-4">Stack 4 cups</h3>
+                    <div class="content has-text-justified">
+                    </div>
+                        <video id="dollyzoom" autoplay controls muted loop playsinline width="32.5%" height="100%">
+                            <source src="./assets/web/real/task_1_view0.mp4"
+                                    type="video/mp4">
+                        </video>
+                        <video id="dollyzoom" autoplay controls muted loop playsinline width="32.5%" height="100%">
+                            <source src="./assets/web/real/task_1_view1.mp4"
+                                    type="video/mp4">
+                        </video>
+                        <video id="dollyzoom" autoplay controls muted loop playsinline width="32.5%" height="100%">
+                            <source src="./assets/web/real/task_1_view2.mp4"
+                                    type="video/mp4">
+                        </video>
+                    <br><br>
+                    </div>
+
+                    <div class="column">
+                        <h3 style="text-align: center" class="title is-4">Move cups</h3>
+                        <div class="content has-text-justified">
+                        </div>
+                            <video id="dollyzoom" autoplay controls muted loop playsinline width="32.5%" height="100%">
+                                <source src="./assets/web/real/task_2_view0.mp4"
+                                        type="video/mp4">
+                            </video>
+                            <video id="dollyzoom" autoplay controls muted loop playsinline width="32.5%" height="100%">
+                                <source src="./assets/web/real/task_2_view1.mp4"
+                                        type="video/mp4">
+                            </video>
+                            <video id="dollyzoom" autoplay controls muted loop playsinline width="32.5%" height="100%">
+                                <source src="./assets/web/real/task_2_view2.mp4"
+                                        type="video/mp4">
+                            </video>
+                        <br><br>
+                        </div>
+        
+                        <div class="column">
+                            <h3 style="text-align: center" class="title is-4">Shift Cups</h3>
+                            <div class="content has-text-justified">
+                            </div>
+                                <video id="dollyzoom" autoplay controls muted loop playsinline width="32.5%" height="100%">
+                                    <source src="./assets/web/real/task_3_view0.mp4"
+                                            type="video/mp4">
+                                </video>
+                                <video id="dollyzoom" autoplay controls muted loop playsinline width="32.5%" height="100%">
+                                    <source src="./assets/web/real/task_3_view1.mp4"
+                                            type="video/mp4">
+                                </video>
+                                <video id="dollyzoom" autoplay controls muted loop playsinline width="32.5%" height="100%">
+                                    <source src="./assets/web/real/task_3_view2.mp4"
+                                            type="video/mp4">
+                                </video>
+                            <br><br>
+                            </div>
+
+        
+
+                            <div>
+
+                            </div>
+        </div>
+        </div>
+
+                  </div>
+                </div>
+        </div>
+        </div>
+      </div>
+</section>    
+
+
+<section class="section">
+    <div class="container">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+            <h1 class="title is-2">LIBERO-LONG benchmark</h1>
+            <br>
+            <p style="text-align: left;">
+                LIBERO-LONG consists of 10 distinct long-horizon robotic manipulation tasks that require diverse skills such as pick-ing up objects, 
+                turning on a stove, and closing a microwave. These tasks involve multi-stage decision-making and span a variety of scenarios, 
+                making them particularly challenging. Table 1 presents the 
+                quantitative comparison on the LIBERO-LONG benchmark. LBP outperforms all baselines, achieving higher success rates across the majority of tasks.
+            <br><br>
+
+            <p style="text-align: left;">
+                <i>Table 1.</i> <b>LIBERO-LONG results.</b> For each task, we present the average performance of top-3 checkpoints. 
+                The metric ``Avg. Success'' measures the average success rate across 10 tasks. LBP outperforms baselines with higher Avg. Success and better results on most tasks. 
+                The best results are <b>bolded</b>. 
+            </p>
+            <div class="content has-text-centered">
+                <img src="./assets/web/lbp_sim.png" alt="algebraic reasoning" class="center" style="width: 100%;">
+              </div>
+
+            <br>
+            <br>
+
+            <style>
+                .columns-container {
+                    display: flex;
+                    justify-content: space-between; /* 使内容块之间均匀分布 */
+                }
+                .column {
+                    flex: 1; /* 使每个内容块占据相同的宽度 */
+                    margin: 0 5px; /* 可选：添加一些间距 */
+                }
+
+            </style>
+
+            <div class="columns-container">
+                <div class="column">
+                    <h3 style="text-align: center" class="title is-5">Task 1: put soup and sauce in basket</h3>
+                    <div class="content has-text-justified">
+                        <video id="dollyzoom" autoplay controls muted loop playsinline>
+                            <source src="./assets/web/libero/put both the alphabet soup and the tomato sauce in the basket.mp4" type="video/mp4">
+                        </video>
+                    </div>
+                </div>
+                <div class="column">
+                    <h3 style="text-align: center" class="title is-5">Task 2: put box and butter in basket</h3>
+                    <div class="content has-text-justified">
+                        <video id="dollyzoom" autoplay controls muted loop playsinline>
+                            <source src="./assets/web/libero/put both the cream cheese box and the butter in the basket.mp4" type="video/mp4">
+                        </video>
+                    </div>
+                </div>
+                <div class="column">
+                    <h3 style="text-align: center" class="title is-5">Task 3: turn on stove and put pot</h3><br>
+                    <div class="content has-text-justified">
+                        <video id="dollyzoom" autoplay controls muted loop playsinline>
+                            <source src="./assets/web/libero/turn on the stove and put the moka pot on it.mp4" type="video/mp4">
+                        </video>
+                    </div>
+                </div>
+            </div>
+
+            <br><br>
+
+            <div class="columns-container">
+                <div class="column">
+                    <h3 style="text-align: center" class="title is-5">Task 4: put bowl in
+drawer and close it</h3>
+                    <div class="content has-text-justified">
+                        <video id="dollyzoom" autoplay controls muted loop playsinline>
+                            <source src="./assets/web/libero/put the black bowl in the bottom drawer of the cabinet and close it.mp4" type="video/mp4">
+                        </video>
+                    </div>
+                </div>
+                <div class="column">
+                    <h3 style="text-align: center" class="title is-5">Task 5: put mugs on
+                        left and right plates</h3>
+                    <div class="content has-text-justified">
+                        <video id="dollyzoom" autoplay controls muted loop playsinline>
+                            <source src="./assets/web/libero/put the white mug on the left plate and put the yellow and white mug on the right plate.mp4" type="video/mp4">
+                        </video>
+                    </div>
+                </div>
+                <div class="column">
+                    <h3 style="text-align: center" class="title is-5">Task 6: pick book and
+                        place it in back</h3>
+                    <div class="content has-text-justified">
+                        <video id="dollyzoom" autoplay controls muted loop playsinline>
+                            <source src="./assets/web/libero/pick up the book and place it in the back compartment of the caddy.mp4" type="video/mp4">
+                        </video>
+                    </div>
+                </div>
+            </div>
+
+            <br><br>
+
+            <div class="columns-container">
+                <div class="column">
+                    <h3 style="text-align: center" class="title is-5">Task 7: put mug on plate and
+                        put pudding to right</h3>
+                    <div class="content has-text-justified">
+                        <video id="dollyzoom" autoplay controls muted loop playsinline>
+                            <source src="./assets/web/libero/put the white mug on the plate and put the chocolate pudding to the right of the plate.mp4" type="video/mp4">
+                        </video>
+                    </div>
+                </div>
+                <div class="column">
+                    <h3 style="text-align: center" class="title is-5">Task 8: put soup and
+                        box in basket</h3><br>
+                    <div class="content has-text-justified">
+                        <video id="dollyzoom" autoplay controls muted loop playsinline>
+                            <source src="./assets/web/libero/put both the alphabet soup and the cream cheese box in the basket.mp4" type="video/mp4">
+                        </video>
+                    </div>
+                </div>
+                <div class="column">
+                    <h3 style="text-align: center" class="title is-5">Task 9: put both
+                        pots on stove</h3><br>
+                    <div class="content has-text-justified">
+                        <video id="dollyzoom" autoplay controls muted loop playsinline>
+                            <source src="./assets/web/libero/put both moka pots on the stove.mp4" type="video/mp4">
+                        </video>
+                    </div>
+                </div>
+            </div>
+
+            <br><br>
+
+
+
+                <div class="column">
+                    <h3 style="text-align: center" class="title is-5">Task 10: put mug in
+                        microwave and close it</h3>
+                    <div class="content has-text-justified">
+                    </div>
+                        <video id="dollyzoom" autoplay controls muted loop playsinline width="31.5%" height="100%">
+                            <source src="./assets/web/libero/put the yellow and white mug in the microwave and close it.mp4"
+                                    type="video/mp4">
+                        </video>
+                    <br><br>
+                    </div>
+
+   
+        </div>
+        </div>
+
+                  </div>
+                </div>
+        </div>
+        </div>
+      </div>
+</section>    
+
+
+
+  
+<footer class="footer">
+<!-- <div class="container"> -->
+    <div class="content has-text-centered">
+    </div>
+    <div class="columns is-centered">
+    <div class="column is-8">
+        <div class="content has-text-centered">
+        <p>
+        This website is website adapted from <a href="https://mmmu-benchmark.github.io/">MMMU</a>, licensed under a <a rel="license"
+                                            href="http://creativecommons.org/licenses/by-sa/4.0/">Creative
+        Commons Attribution-ShareAlike 4.0 International License</a>.
+        </p>
+        </div>
+    </div>
+    </div>
+<!-- </div> -->
+
+
+</footer>
+
+
+</body>
