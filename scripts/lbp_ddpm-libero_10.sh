@@ -37,7 +37,7 @@ python -m torch.distributed.launch \
         --learning_rate 3e-4 \
         --weight_decay 0 \
         --eta_min_lr 0 \
-        --save_interval 50000 \
+        --save_interval 20000 \
         --warm_steps 2000 \
         --log_interval 50 \
         --recursive_step $RECURSIVE_PLANNING_STEP \
