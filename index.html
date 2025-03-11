@@ -197,15 +197,15 @@
         display: inline-block;
         width: 0;
         height: 0;
-        border-top: 10px solid transparent;
-        border-bottom: 10px solid transparent;
-        border-left: 15px solid #2e6aff; /* 初始向右的三角形 */
+        border-left: 10px solid transparent;
+        border-right: 10px solid transparent;
+        border-top: 15px solid #2e6aff; /* 初始向右的三角形 */
         margin-right: 10px;
         transition: transform 0.3s ease; /* 平滑过渡 */
     }
 
     .title-container.expanded::before {
-        transform: rotate(90deg); /* 展开时旋转为向下的三角形 */
+        transform: rotate(-90deg); /* 展开时旋转为向下的三角形 */
     }
 
     .content {
@@ -219,13 +219,13 @@
     }
 
     .hidden_content {
-        display: none;
+        display: block;
         margin-top: 10px;
         border-radius: 5px;
     }
 
     .hidden_content.visible {
-        display: block; /* 显示内容 */
+        display: none; /* 显示内容 */
     }
 
 </style>
