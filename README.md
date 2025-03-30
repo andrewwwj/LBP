@@ -1,5 +1,5 @@
 # LBP
-Efficient Robotic Policy Learning via Latent Space Backward Planning
+Efficient Robotic Policy Learning via Latent Space Backward Planning [[Website](https://dstate.github.io/LBP/)]
 
 ## Citation
 ```
