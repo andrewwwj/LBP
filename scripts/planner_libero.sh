@@ -1,5 +1,5 @@
 #!/bin/bash
-export WANDB_API_KEY=a9abdbf33f19f62cbbd321e4498210cbaaf1efc0
+
 # fix
 SEED=42
 NUM_PROCS=2
