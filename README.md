@@ -12,21 +12,9 @@ We propose a Latent Space Backward Planning scheme (LBP), which balances efficie
 </p>
 
 
-## Citation
-- If you want to reference this work, please cite it as:
-```
-@inproceedings{
-    liu-niu2025lbp,
-    title={Efficient Robotic Policy Learning via Latent Space Backward Planning},
-    author={Dongxiu Liu and Haoyi Niu and Zhihao Wang and Jinliang Zheng and Yinan Zheng and zhonghong Ou and Jianming Hu and Jianxiong Li and Xianyuan Zhan},
-    booktitle={International Conference on Machine Learning},
-    year={2025}
-}
-```
-
 ## Quick Start
 
-### Installtion
+### Installation
 
 1. Clone this repository and create an environment.
 ```bash
@@ -82,6 +70,18 @@ bash scripts/lbp_ddpm-libero_10.sh
 3. Evaluate the policy on LIBERO benchmark.
 ```bash
 python eval_libero.py
+```
+
+## Citation
+- If you want to reference this work, please cite it as:
+```
+@inproceedings{
+    liu-niu2025lbp,
+    title={Efficient Robotic Policy Learning via Latent Space Backward Planning},
+    author={Dongxiu Liu and Haoyi Niu and Zhihao Wang and Jinliang Zheng and Yinan Zheng and zhonghong Ou and Jianming Hu and Jianxiong Li and Xianyuan Zhan},
+    booktitle={International Conference on Machine Learning},
+    year={2025}
+}
 ```
 
 ## License
