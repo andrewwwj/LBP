@@ -143,6 +143,8 @@ def main_ddp(config):
 
     # training
     model, train_loader, optimizer, lr_scheduler = prepare_training_components(config)
+
+    logger.log_msg_every(f"cfffff: {config['seed']}")
     train(config, logger, model, train_loader, optimizer, lr_scheduler)
     close_ddp_env()
 

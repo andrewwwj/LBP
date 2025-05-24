@@ -46,7 +46,7 @@ class DnceLatentProj(nn.Module):
         latent_info_file='assets/libero.pkl'
     ):
         super().__init__()
-        self.latent_proj = DecisionNCE.load("DecisionNCE-RoboMutual", device="cuda")
+        self.latent_proj = DecisionNCE.load("DecisionNCE-T", device="cuda")
         self.latent_proj.requires_grad_(False)
 
         if latent_info_file is not None:

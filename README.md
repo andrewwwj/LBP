@@ -1,5 +1,6 @@
 # Efficient Robotic Policy Learning via Latent Space Backward Planning
 [[Website](https://dstate.github.io/LBP/)]  [[Paper](https://www.arxiv.org/pdf/2505.06861)]
+
 🔥 **LBP has been accepted by ICML2025** 🔥
 
 ## Introduction
@@ -25,17 +26,17 @@ We propose a Latent Space Backward Planning scheme (LBP), which balances efficie
 
 ## Quick Start
 
-### Install
+### Installtion
 
-1. Clone this repository and create an environment
+1. Clone this repository and create an environment.
 ```bash
+git clone git@github.com:Dstate/LBP.git
 conda create -n lbp python=3.8 -y
 conda activate lbp
-git clone git@github.com:Dstate/LBP.git
-cd LBP
+
 ```
 
-2. Set up [DecisionNCE](https://github.com/2toinf/DecisionNCE)
+2. Set up [DecisionNCE](https://github.com/2toinf/DecisionNCE).
 ```bash
 git clone https://github.com/2toinf/DecisionNCE.git
 cd DecisionNCE
@@ -43,14 +44,14 @@ pip install -e .
 cd ..
 ```
 
-3. We use the checkpoint of [DecisionNCE(Robo-MUTUAL)](https://github.com/255isWhite/Robo_MUTUAL), please download from [link](https://drive.google.com/file/d/1_bvhXUzWYWhg7bUANhDRB9Zq09wKcjB1/view?usp=drive_link)
+3. We use the checkpoint of [DecisionNCE(Robo-MUTUAL)](https://github.com/255isWhite/Robo_MUTUAL), please download from [link](https://drive.google.com/file/d/1_bvhXUzWYWhg7bUANhDRB9Zq09wKcjB1/view?usp=drive_link).
 ```bash
 mkdir -p ~/.cache/DecisionNCE
 mv <above_downloaded_ckpt> DecisionNCE-T
 mv DecisionNCE-T ~/.cache/DecisionNCE
 ```
 
-4. Set up [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO)
+4. Set up [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO). We re-render the images to 224 × 224 resolution, following the processing procedure of [OpenVLA](https://github.com/openvla/openvla).
 ```bash
 git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git
 cd LIBERO
@@ -59,8 +60,29 @@ pip install -e .
 cd ..
 ```
 
-5. Install other package
-
+5. Install other package for LBP.
 ```bash
+cd LBP
+pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.11.0 --extra-index-url https://download.pytorch.org/whl/cu113
 pip install -r requirements.txt
 ```
+
+### Training and evaluation
+
+1. Train the latent backward planner.
+```bash
+bash scripts/planner_libero.sh
+```
+
+2. Then train the policy.
+```bash
+bash scripts/lbp_ddpm-libero_10.sh
+```
+
+3. Evaluate the policy on LIBERO benchmark.
+```bash
+python eval_libero.py
+```
+
+## License
+All the code, model weights, and data are licensed under [MIT license](LICENSE).
