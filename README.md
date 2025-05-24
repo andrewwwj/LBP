@@ -44,7 +44,7 @@ pip install -e .
 cd ..
 ```
 
-3. We use the checkpoint of [DecisionNCE(Robo-MUTUAL)](https://github.com/255isWhite/Robo_MUTUAL), please download from [link](https://drive.google.com/file/d/1_bvhXUzWYWhg7bUANhDRB9Zq09wKcjB1/view?usp=drive_link).
+3. We use the checkpoint of [DecisionNCE(Robo-MUTUAL)](https://github.com/255isWhite/Robo_MUTUAL), which can be downloaded from [link](https://drive.google.com/file/d/1_bvhXUzWYWhg7bUANhDRB9Zq09wKcjB1/view?usp=drive_link).
 ```bash
 mkdir -p ~/.cache/DecisionNCE
 mv <above_downloaded_ckpt> DecisionNCE-T
