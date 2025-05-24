@@ -27,7 +27,6 @@ class ResNet(nn.Module):
         *args, **kwargs
     ):
         super().__init__(*args, **kwargs)
-        pretraine_path = f'/home/ldx/.cache/huggingface/hub/models--timm--{model_name}.a1_in1k/pytorch_model.bin'
 
         if not pretraine_path :
             self.model = timm.create_model(model_name, 
