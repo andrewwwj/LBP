@@ -73,7 +73,7 @@ python eval_libero.py
 ```
 
 ## Citation
-- If you want to reference this work, please cite it as:
+If the paper or the codebase is helpful with your research, please cite it as:
 ```
 @inproceedings{
     liu-niu2025lbp,
