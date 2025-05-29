@@ -55,6 +55,9 @@ pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.11.0 --e
 pip install -r requirements.txt
 ```
 
+### Data Cleaning
+We follow [OpenVLA](https://github.com/openvla/openvla) to regenerate the Libero dataset into 224×224 resolution and filter out failed rollouts. Additionally, we save each trajectory as a separate HDF5 file. An example of the expected format can be found [here](https://drive.google.com/file/d/1LQMKuuphwiA-C1GC98PCIRoxSe3y1qOv/view?usp=sharing).
+
 ### Training and evaluation
 
 1. Train the latent backward planner.
