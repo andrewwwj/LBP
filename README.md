@@ -56,7 +56,11 @@ pip install -r requirements.txt
 ```
 
 ### Dataset Preprocessing
-We follow [OpenVLA](https://github.com/openvla/openvla) to regenerate the Libero dataset into 224×224 resolution and filter out failed rollouts. Additionally, we save each trajectory as a separate HDF5 file. An example of the expected format can be found [here](https://drive.google.com/file/d/1LQMKuuphwiA-C1GC98PCIRoxSe3y1qOv/view?usp=sharing).
+We follow [OpenVLA](https://github.com/openvla/openvla) to regenerate the Libero dataset into 256×256 resolution and filter out failed rollouts. Additionally, we save each trajectory as a separate HDF5 file. Note that we use a different HDF5 format from the original, and an example of the expected format can be found [here](https://drive.google.com/file/d/1LQMKuuphwiA-C1GC98PCIRoxSe3y1qOv/view?usp=sharing).
+To convert your dataset to our format, run the following script:
+```
+python hdf52hdf5.py
+```
 
 ### Training and evaluation
 
