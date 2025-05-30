@@ -39,7 +39,7 @@ mv <above_downloaded_ckpt> DecisionNCE-T
 mv DecisionNCE-T ~/.cache/DecisionNCE
 ```
 
-4. Set up [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO). We re-render the images to 224 × 224 resolution, following the processing procedure of [OpenVLA](https://github.com/openvla/openvla).
+4. Set up [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO).
 ```bash
 git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git
 cd LIBERO
@@ -56,13 +56,13 @@ pip install -r requirements.txt
 ```
 
 ### Dataset Preprocessing
-We follow [OpenVLA](https://github.com/openvla/openvla) to regenerate the Libero dataset into 256×256 resolution and filter out failed rollouts. 
+We follow [OpenVLA](https://github.com/openvla/openvla) to regenerate the Libero dataset into 256×256 resolution and filter out failed rollouts (by running `openvla/experiments/robot/libero/regenerate_libero_dataset.py`). 
 
-Note that we use a different HDF5 format from the original, and an example of the expected format can be found [here](https://drive.google.com/file/d/1LQMKuuphwiA-C1GC98PCIRoxSe3y1qOv/view?usp=sharing).
-To convert your dataset to our format, run the following script:
+Note that we use a different HDF5 format from the original. To convert your dataset to our format, run the following script:
 ```
 python hdf52hdf5.py
 ```
+An example of the our format can be found [here](https://drive.google.com/drive/folders/1cmJNChezV--pfy1UgmJfTCT3W-7MCd6Z?usp=sharing). You can also directly download our preprocessed data from the same link.
 
 ### Training and evaluation
 
