@@ -46,8 +46,8 @@ class DnceLatentProj(nn.Module):
         latent_info_file='assets/libero.pkl'
     ):
         super().__init__()
-        self.latent_proj = DecisionNCE.load("DecisionNCE-T", device="cuda")
-        self.latent_proj.requires_grad_(False)
+        self.latent_proj = DecisionNCE.load("DecisionNCE-T", device="cuda")  # Load pre-trained model
+        self.latent_proj.requires_grad_(False)  # Freeze pre-trained model
 
         if latent_info_file is not None:
             with open(latent_info_file, "rb") as f:
@@ -88,41 +88,41 @@ class MidImaginator(nn.Module):
         self.state_random_noise = state_random_noise
         self.state_noise_strength = state_noise_strength
         self.loss_func = loss_func(**loss_func_conig)
-        self.latent_proj = DnceLatentProj(latent_info_file=latent_info_file)
+        self.latent_proj = DnceLatentProj(latent_info_file=latent_info_file)  # TODO replace with VLM
         self.goal_rec = DualPathPredictor(latent_dim=self.latent_dim, output_dim=self.latent_dim)
         self.latent_planner = TriplePathPredictor(latent_dim=latent_dim, output_dim=self.latent_dim)
 
     def forward(self, cur_images, instruction, sub_goals, **kwargs):
-        sg = self.latent_proj.lang_proj(instruction)
-        s0 = self.latent_proj.img_proj(cur_images[:, 0, ...])
-        B, G, C, H, W = sub_goals.shape
+        sg = self.latent_proj.lang_proj(instruction)  # TODO replace with lang embedding of VLM
+        s0 = self.latent_proj.img_proj(cur_images[:, 0, ...])   # TODO replace with img embedding of VLM
+        B, G, C, H, W = sub_goals.shape  # subgoals: a series of images during training
         sub_goals = sub_goals.reshape(B*G, C, H, W)
         sub_goals = self.latent_proj.img_proj(sub_goals)
         sub_goals = sub_goals.reshape(B, G, -1)
         
         loss_dict = {}
+        # Predict previous latents of the last sub-goal
         pred_goal = self.goal_rec(s0, sg)
+        # compare with the latent of ground truth
         loss_dict[f"loss_latent_zg"] = self.loss_func(pred_goal, sub_goals[:, 0, ...])
-        
-        random_number = random.random()
-        if random_number < 0.5:
-            for i in range(1, self.recursive_step):
-                # latent planners
+
+        # Recursive sub-goal prediction
+        use_pred_goal = torch.rand(1).item() < 0.5
+        for i in range(1, self.recursive_step):
+            if use_pred_goal:
                 last_subgoal = pred_goal
-                target_subgoal = sub_goals[:, i, ...]
-                pred_goal = self.latent_planner(s0, last_subgoal, sg)
-                loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_goal, target_subgoal)
-        else :
-            for i in range(1, self.recursive_step):
-                # latent planners
-                last_subgoal = sub_goals[:, i-1, ...]
-                target_subgoal = sub_goals[:, i, ...]
-                if self.state_random_noise:
-                    random_noise = torch.randn_like(last_subgoal) * self.state_noise_strength
-                    last_subgoal = last_subgoal + random_noise
-                pred_goal = self.latent_planner(s0, last_subgoal, sg)
-                loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_goal, target_subgoal)
-        
+            else:
+                last_subgoal = sub_goals[:, i - 1, ...]
+                if self.state_random_noise:  # State augmentation
+                    noise = torch.randn_like(last_subgoal) * self.state_noise_strength
+                    last_subgoal = last_subgoal + noise
+            target_subgoal = sub_goals[:, i, ...]   # ground truth
+            # Recursively predict previous latent sub-goal given current one
+            pred_goal = self.latent_planner(s0, last_subgoal, sg)
+            # pred_goal = last_subgoal + self.latent_planner(s0, last_subgoal, sg)  # residual prediction
+            # Compare with the latent of ground truth
+            loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_goal, target_subgoal)
+
         loss = sum(loss_dict.values()) / len(loss_dict)
         loss_dict['loss'] = loss
         return loss, loss_dict

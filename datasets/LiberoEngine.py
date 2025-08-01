@@ -1,22 +1,18 @@
 import os
 import os.path as osp
-import torch
+from pathlib import Path
 import numpy as np
-import io
 import json
-import mmengine.fileio as fileio
-from PIL import Image
+import h5py
+# from PIL import Image
+import cv2
 import random
+import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader, DistributedSampler
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
-import h5py
-import cv2
-from pathlib import Path
 from tqdm import tqdm
-import torch
-import torch.nn as nn
 
 def build_base_transform(n_px, aug=True, to_tensor=True, apply_norm=True,
                         crop_scale=(0.75,1.0), crop_ratio=(0.75, 1.33), crop_prob=1.0, flip_prob=0.5, jitter_prob=0.5, 
@@ -57,7 +53,7 @@ def build_dataset_statistics(dataset_path, cache_json_name='cache.json'):
         actions = []
         # check all data
         for file in tqdm(hdf5_files):
-            with h5py.File(io.BytesIO(fileio.get(file)), 'r') as f:
+            with h5py.File(file, 'r') as f:
                 views = list(f['observation'].keys())
                 traj_actions = f['action'][()].astype('float32')
                 traj_proprios = f['proprio'][()].astype('float32')
@@ -127,8 +123,13 @@ class LiberoDataset(Dataset):
         self.chunk_length = chunk_length
         self.recursive_step = recursive_step
         self.rec_plan_coef = rec_plan_coef
+        self.traj_files = {}
         self._load_metas()
-    
+
+    def __del__(self):
+        for traj_path in self.traj_files:
+            self.traj_files[traj_path].close()
+
     def _load_metas(self):
         dataset_statistics = build_dataset_statistics(self.dataset_path)
         traj_paths = dataset_statistics['traj_paths']
@@ -137,31 +138,45 @@ class LiberoDataset(Dataset):
         self.main_view = self.views[0]
         self.metas = []
         for i in range(len(traj_paths)):
+            traj_path = traj_paths[i]
+            if traj_path not in self.traj_files:
+                self.traj_files[traj_path] = h5py.File(traj_path, 'r')
             self.metas.extend([(traj_paths[i], j, traj_lens[i]-1) for j in range(traj_lens[i])])
 
-    def _load_from_raw_traj(self, traj_path, cur_idx, goal_idx):
-        with h5py.File(io.BytesIO(fileio.get(traj_path)), 'r') as f:
-            # load images from all views
-            raw_images = []
-            for view in self.views:
-                raw_img = cv2.imdecode(f['observation'][view][cur_idx], cv2.IMREAD_COLOR)
-                raw_images.append(raw_img)
-            # load subgoals
-            subgoals = []
-            for i in range(self.recursive_step):
-                raw_img = cv2.imdecode(f['observation'][self.main_view][goal_idx], cv2.IMREAD_COLOR)
-                goal_idx = cur_idx + int((goal_idx - cur_idx) * self.rec_plan_coef)
-                subgoals.append(raw_img)
-            # load actions with chunking
-            np_action = f['action'][()][cur_idx : cur_idx + self.chunk_length]
-            if len(np_action) < self.chunk_length:
-                cnt = self.chunk_length - len(np_action)
-                padding = np.array([[0., 0., 0., 0., 0., 0., np_action[-1][-1]]]).repeat(cnt, axis=0)
-                np_action = np.concatenate([np_action, padding], axis=0)
-            # load proprio
-            raw_proprio = f['proprio'][()][cur_idx]
-            # load instruction
-            instruction = f['language_instruction'][()].decode('utf-8')
+    def _load_from_raw_traj(self, f, cur_idx, goal_idx):
+        # load images from all views
+        raw_images = []
+        for view in self.views:
+            # encoded_data = f['observation'][view][cur_idx]  # HDF5에서 바이트 배열 추출 (numpy array)
+            # img = Image.open(io.BytesIO(encoded_data))
+            # raw_img = np.array(img)
+            raw_img = cv2.imdecode(f['observation'][view][cur_idx], cv2.IMREAD_COLOR)
+            # Visualize the image
+            # import matplotlib.pyplot as plt
+            # img_rgb = cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB)
+            # plt.figure(figsize=(8, 8))
+            # plt.imshow(img_rgb); plt.axis('off'); plt.show()
+            raw_images.append(raw_img)
+        # load subgoals
+        subgoals = []
+        for i in range(self.recursive_step):
+            # encoded_data = f['observation'][self.main_view][goal_idx]  # HDF5에서 바이트 배열 추출
+            # img = Image.open(io.BytesIO(encoded_data))
+            # raw_img = np.array(img)
+            raw_img = cv2.imdecode(f['observation'][self.main_view][goal_idx], cv2.IMREAD_COLOR)
+            subgoals.append(raw_img)
+            goal_idx = cur_idx + int((goal_idx - cur_idx) * self.rec_plan_coef)
+        # load actions with chunking
+        np_action = f['action'][()][cur_idx: cur_idx + self.chunk_length]
+        # np_action = f['action'][cur_idx: cur_idx + self.chunk_length]
+        if len(np_action) < self.chunk_length:
+            cnt = self.chunk_length - len(np_action)
+            padding = np.array([[0., 0., 0., 0., 0., 0., np_action[-1][-1]]]).repeat(cnt, axis=0)
+            np_action = np.concatenate([np_action, padding], axis=0)
+        # load proprio
+        raw_proprio = f['proprio'][()][cur_idx]
+        # load instruction
+        instruction = f['language_instruction'][()].decode('utf-8')
         return raw_images, subgoals, np_action, raw_proprio, instruction
 
     def __len__(self):
@@ -169,13 +184,14 @@ class LiberoDataset(Dataset):
     
     def __getitem__(self, index):
         meta = self.metas[index]
-        raw_images, subgoals, np_action, raw_proprio, instruction = self._load_from_raw_traj(meta[0], meta[1], meta[2])
+        traj_path, cur_idx, goal_idx = meta[0], meta[1], meta[2]
+        f = self.traj_files[traj_path]
+        raw_images, subgoals, np_action, raw_proprio, instruction = self._load_from_raw_traj(f, cur_idx, goal_idx)
         cur_image, replay_params = self.processor.preprocess_image(raw_images[0])
         final_images = [cur_image, *[self.processor.preprocess_image(img)[0] for img in raw_images[1:]]]
         subgoals = [self.processor.preprocess_image(img, replay_params)[0] for img in subgoals]
         final_images = torch.stack(final_images)
         subgoals = torch.stack(subgoals)
-        
         final_action = self.processor.preprocess_action(np_action) # 42
         final_proprio = self.processor.preprocess_proprio(raw_proprio)
         item = {
@@ -248,14 +264,14 @@ def build_libero_processor(dataset_path, img_size=224, training=True):
     return processor
 
 def build_libero_dataloader(dataset_path, processor, chunk_length=6, recursive_step=4, rec_plan_coef=0.5,
-                        batch_size=2, num_workers=2, shuffle=True, pin_mem=True, drop_last=True, 
+                        batch_size=2, num_workers=2, shuffle=True, pin_mem=True, drop_last=True,
                         world_size=1, global_rank=0):
     
     train_dataset = LiberoDataset(dataset_path=dataset_path, processor=processor, chunk_length=chunk_length,
                                   recursive_step=recursive_step, rec_plan_coef=rec_plan_coef)
     sampler = DistributedSampler(train_dataset, shuffle=shuffle, num_replicas=world_size, rank=global_rank) 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=num_workers,
-                                 sampler=sampler, pin_memory=pin_mem, drop_last=drop_last)
+                                 sampler=sampler, pin_memory=pin_mem, drop_last=drop_last, persistent_workers=True)
     return train_dataloader
 
 def build_libero_agent(processor, use_ac=True):
@@ -339,7 +355,7 @@ class LIBEROEval():
     def _init_env(self, task_suite, task_id: int=0):
         # get task information and env args
         task = task_suite.get_task(task_id)
-        task_name = task.name
+        # task_name = task.name
         task_description = task.language
         task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
         print(f"[info] retrieving task {task_id} from suite {self.task_suite_name}, the " + \
@@ -430,14 +446,11 @@ class LIBEROEval():
             wrist_view = obs['robot0_eye_in_hand_image']
             proprios = np.concatenate([gripper_qpos, eef_pos, eef_quat], axis=-1)
             lang_instruction = [lang] * self.num_episodes
-            
             # get action
             action = policy.get_action(agent_view, wrist_view, proprios, lang_instruction, t)
-
             # record the video
             B, H, W, C = agent_view.shape
             images.append(agent_view.reshape(B * H, W, C))
-            
             # step
             obs, reward, done, info = env['env'].step(action)
             if done.all():
@@ -447,12 +460,10 @@ class LIBEROEval():
         
         num_success = 0
         for k in range(self.num_episodes):
-                num_success += int(done[k])
+            num_success += int(done[k])
         avg_succ_rate = num_success / self.num_episodes
-        
         metrics = {f'sim/{self.task_suite_name}/{lang}': avg_succ_rate}
         self._log_results(metrics, self.step)
-        
         env['env'].close()
         return avg_succ_rate
     
@@ -481,7 +492,6 @@ class LIBEROEval():
 
 def eval_libero(agent, result_path, num_episodes=10, seed=42,
                 task_suites=["libero_goal", "libero_spatial", "libero_10"]):
-
     result_dict = {}
     for suite_name in task_suites:
         horizon = LIBERO_DATASETS_HORIZON[suite_name]

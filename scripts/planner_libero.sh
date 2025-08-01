@@ -1,39 +1,67 @@
 #!/bin/bash
 
-# fix
-SEED=42
-NUM_PROCS=2
-BS_PER_PROC=32
-CURRENT_DATE="0307"
+EXPERIMENT_NAME=$1
+SEED=$2
+NUM_PROCS=$3
+BS_PER_PROC=$4
+ITER_TOTAL=$5
+SAVE_INTERVAL=$6
+MODEL_NAME=$7
+ENGINE_NAME=$8
+IMG_SIZE=$9
+LEARNING_RATE=${10}
+WEIGHT_DECAY=${11}
+ETA_MIN_LR=${12}
+LOG_INTERVAL=${13}
+RECURSIVE_STEP=${14}
+REC_PLAN_COEF=${15}
+DATASET_DIR=${16}
+LIBERO_TASK=${17}
+NUM_WORKERS=${18}
+PIN_MEMORY=${19}
 
-# hyper
-PORT=26501
-AVAILABLE_GPUS="6,7"
+NUM_ITERS=$((ITER_TOTAL / (NUM_PROCS * BS_PER_PROC)))
+WARM_STEPS=$((4000/${NUM_PROCS}))
+
+#DATE=$(date +"%m%d")
+LIBERO_TASK="libero_10"
+
+AVAILABLE_GPUS="0" # "6,7"
 MODEL_NAME="mid_planner_dnce_noise"
-EXPERIMENT_NAME="runnings/${CURRENT_DATE}-mid_planner_libero_dnce-bs_$((NUM_PROCS*BS_PER_PROC))-seed_${SEED}"
 
-python -m torch.distributed.launch \
-    --nproc_per_node=${NUM_PROCS} \
-    --nnodes=1 \
-    --node_rank=0 \
-    --master_addr="127.0.0.1" \
-    --master_port=${PORT} \
-    train_policy_sim.py \
-        --seed $SEED \
-        --output_dir $EXPERIMENT_NAME \
-        --gpus $AVAILABLE_GPUS \
-        --num_iters 100000 \
-        --model_name $MODEL_NAME \
-        --engine_name build_libero_engine \
-        --dataset_path /mnt/ssd0/data/libero \
-        --img_size 224 \
-        --batch_size $BS_PER_PROC \
-        --num_workers 8 \
-        --learning_rate 3e-4 \
-        --weight_decay 0 \
-        --eta_min_lr 0 \
-        --save_interval 20000 \
-        --warm_steps 2000 \
-        --log_interval 50 \
-        --recursive_step 4 \
-        --rec_plan_coef 0.5
+TRAIN_ARGS=(
+    --seed $SEED
+    --output_dir $EXPERIMENT_NAME
+    --gpus $AVAILABLE_GPUS
+    --num_iters $NUM_ITERS
+    --model_name $MODEL_NAME
+    --engine_name $ENGINE_NAME
+    --dataset_path $DATASET_DIR/$LIBERO_TASK
+    --img_size $IMG_SIZE
+    --batch_size $BS_PER_PROC
+    --pin_mem $PIN_MEMORY
+    --num_workers $NUM_WORKERS
+    --learning_rate $LEARNING_RATE
+    --weight_decay $WEIGHT_DECAY
+    --eta_min_lr $ETA_MIN_LR
+    --save_interval $SAVE_INTERVAL
+    --warm_steps $WARM_STEPS
+    --log_interval $LOG_INTERVAL
+    --recursive_step $RECURSIVE_STEP
+    --rec_plan_coef $REC_PLAN_COEF
+)
+
+if [ $NUM_PROCS -eq 1 ]; then
+    echo "Running with a single GPU..."
+    python train_policy_sim.py "${TRAIN_ARGS[@]}"
+else
+    echo "Running with $NUM_PROCS GPUs using torchrun..."
+    PORT=26501
+    torchrun \
+        --nproc_per_node=${NUM_PROCS} \
+        --nnodes=1 \
+        --node_rank=0 \
+        --master_addr="127.0.0.1" \
+        --master_port=${PORT} \
+        train_policy_sim.py "${TRAIN_ARGS[@]}"
+fi

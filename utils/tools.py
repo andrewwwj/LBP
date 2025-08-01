@@ -1,16 +1,17 @@
 import io
 import os
-import time
-import logging
-import random
-import subprocess
+from datetime import datetime
+# import time
+# import logging
+# import random
+# import subprocess
 from collections import defaultdict, deque
 import datetime
 
 import torch
 import torch.distributed as dist
-import mmengine
-import wandb
+# import mmengine
+# import wandb
 import signal
 import sys
 
@@ -41,15 +42,23 @@ def format_time_hms(current_time, start_time=0):
 
 def save_checkpoint(iter, model, optimizer, lr_scheduler, 
                     save_root, ckpt_name, save_model_only=True):
-    
     os.makedirs(save_root, exist_ok=True)
+    try:
+        from torch.ao.optimize import unwrap_model
+        unwrapped_model = unwrap_model(model)
+    except (ImportError, AttributeError):
+        # If current torch doesn't support torch.ao, directly remove _orig_mod
+        if hasattr(model, '_orig_mod'):
+            unwrapped_model = model._orig_mod
+        else:
+            unwrapped_model = model
     if save_model_only:
-        model_dict = model.state_dict()
+        model_dict = unwrapped_model.state_dict()
         torch.save(model_dict, os.path.join(save_root, f"Model_{ckpt_name}.pth"))
     else:
         ckpt_dict = {
             'iter': iter,
-            'model': model.state_dict(),
+            'model': unwrapped_model.state_dict(),
             'optimizer': optimizer.state_dict(),
             'lr_scheduler': lr_scheduler.state_dict(),
         }

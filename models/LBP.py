@@ -1,14 +1,13 @@
-
-from timm.layers import Mlp
+# from timm.layers import Mlp
+# import torch
+# import torch.nn as nn
+# import torch.nn.functional as F
+# import DecisionNCE
+# import math
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import DecisionNCE
-import math
-import torch
-import torch.nn as nn
 
-from .components.MlpResNet import MlpResNet
+# from .components.MlpResNet import MlpResNet
 from .components.ResNet import FilmResNet
 from .components.ActionHead import BaseHead, DDPMHead
 from .components.CrossAttn import CrossAttnBlock
@@ -36,8 +35,14 @@ class LBPPolicy(nn.Module):
         super().__init__()
         # condition encoder
         self.imaginator = mid_planner_dnce_noise(recursive_step=4)
-        self.imaginator.load_state_dict(torch.load(imaginator_ckpt_path, map_location='cpu'), strict=True)
-        self.imaginator.requires_grad_(False)
+        state_dict = torch.load(imaginator_ckpt_path, weights_only=True, map_location='cpu')
+        # handle prefix from torch.compile
+        tc_prefix = '_orig_mod.'
+        for k, v in list(state_dict.items()):
+            if k.startswith(tc_prefix):
+                state_dict[k[len(tc_prefix):]] = state_dict.pop(k)
+        self.imaginator.load_state_dict(state_dict, strict=True)  # load trained planner
+        self.imaginator.requires_grad_(False)  # Freeze pre-trained planner
         self.recursive_step = recursive_step
         self.latent_dim = 1024
 

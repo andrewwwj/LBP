@@ -2,26 +2,28 @@ import h5py
 import numpy as np
 from tqdm import tqdm
 import os
-from PIL import Image
 import cv2
-from mmengine import fileio
+# from PIL import Image
 import io
 
-data_names = ['libero_10', 'libero_goal', 'libero_object', 'libero_spatial', 'libero_90']
+data_names = ['libero_10', 'libero_90', 'libero_goal', 'libero_object', 'libero_spatial']
 for data_name in data_names:
+    if data_name != 'libero_10':
+        continue
     obs_keys = ['agentview_rgb', 'eye_in_hand_rgb']#, 'joint_states', 'gripper_states']
-    base_dir = f'/data2/libero/256/{data_name}'
-    save_base_dir = f'/data2/libero/256_processed/{data_name}'
+    base_dir = f'/home/andrew/pyprojects/datasets/Libero/256x256/{data_name}'
+    save_base_dir = f'/home/andrew/pyprojects/datasets/Libero/256x256/processed{data_name}'
     hdf5_path_list = os.listdir(base_dir)
 
-    for hdf5_path in hdf5_path_list:
+    for hdf5_path in tqdm(hdf5_path_list):
+        print(f'\nProcessing {data_name} {hdf5_path} ...')
         # open file
         hdf5_file = h5py.File(os.path.join(base_dir, hdf5_path), 'r', swmr=False, libver='latest')
         demos = list(hdf5_file["data"].keys())
         inds = np.argsort([int(elem[5:]) for elem in demos])
         demos_sorted = [demos[i] for i in inds]
-        print(demos)
-        print(demos_sorted)
+        # print(demos)
+        # print(demos_sorted)
 
         # language instruction
         lang_instruction = hdf5_path.split("_demo.hdf5")[0].replace("_", " ")
@@ -29,10 +31,9 @@ for data_name in data_names:
         lang_instruction = lang_instruction.lstrip(' ')
         print(lang_instruction)
 
-
         # get data
         all_data = dict()
-        for ep in tqdm(demos_sorted):
+        for ep in demos_sorted:
             all_data = {}
             all_data["third_image"] = hdf5_file["data/{}/obs/{}".format(ep, 'agentview_rgb')][()].astype('float32')
             all_data["wrist_image"] = hdf5_file["data/{}/obs/{}".format(ep, 'eye_in_hand_rgb')][()].astype('float32')
@@ -44,25 +45,19 @@ for data_name in data_names:
             compressed_3rd_img = []
             compressed_wrist_img = []
             for i in range(all_data["third_image"].shape[0]):
-                # 获取单张图片
+                # Get a single image
                 img_3rd = all_data["third_image"][i][::-1, ::-1]
-
-                # 将图片压缩到目标大小
+                # Compress the image to the target size
                 result, encimg_3rd = cv2.imencode('.jpg', img_3rd)
-                
-                # 将压缩后的图片添加到列表中
+                # Add the compressed image to the list
                 compressed_3rd_img.append(encimg_3rd)
-                
             for i in range(all_data["wrist_image"].shape[0]):
-                # 获取单张图片
+                # Get a single image
                 img_wrist = all_data["wrist_image"][i]
-
-                # 将图片压缩到目标大小
+                # Compress the image to the target size
                 result, encimg_wrist = cv2.imencode('.jpg', img_wrist)
-                
-                # 将压缩后的图片添加到列表中
-                compressed_wrist_img.append(encimg_wrist)         
-            
+                # Add the compressed image to the list
+                compressed_wrist_img.append(encimg_wrist)
             # save
             save_dir = os.path.join(save_base_dir, hdf5_path.split('.')[0])
             os.makedirs(save_dir, exist_ok=True)
@@ -84,7 +79,8 @@ for data_name in data_names:
                         
             file_save_path = os.path.join(save_dir, f"{ep}.hdf5")
             h.close()
-            fileio.put(f.getvalue(), file_save_path)
+            with open(file_save_path, 'wb') as f_out:
+                f_out.write(f.getvalue())
             
             # os.makedirs(f"{save_dir}/image0", exist_ok=True)
             # os.makedirs(f"{save_dir}/image1", exist_ok=True)

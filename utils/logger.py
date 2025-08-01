@@ -9,14 +9,18 @@ import datetime
 
 
 class Logger(object):
-    def __init__(self, global_rank, world_size, output_dir, logger_type, **kwargs):
-        self.global_rank = global_rank
-        self.world_size = world_size
+    def __init__(self, output_dir, logger_type, global_rank=0, world_size=1, **kwargs):
+        if not dist.is_initialized():
+            self.global_rank = 0
+            self.world_size = 1
+        else:
+            self.global_rank = global_rank
+            self.world_size = world_size
         self.output_dir = output_dir
-        
+
         if self.global_rank == 0:
             self._init_visual_logger(logger_type, output_dir)
-            self._save_cfg(world_size=world_size, output_dir=output_dir, **kwargs)
+            self._save_cfg(world_size=self.world_size, output_dir=output_dir, **kwargs)
     
     def _save_cfg(self, **cfg_dict):
         save_root = self.output_dir
@@ -40,16 +44,18 @@ class Logger(object):
         if self.global_rank == 0:
             print(f"[rank {self.global_rank}]: {msg}")
 
-    def log_metric(self, metric:dict):
+    def log_metric(self, metric: dict):
         avg_metric = {}
         global_iter = metric.pop('iter', -1)
-        for k,v in metric.items():
-            metric_tensor = v
-            if self.world_size > 1:
-                metric_tensor = torch.tensor(v, dtype=torch.float).cuda()
+        for k, v in metric.items():
+            metric_tensor = torch.tensor(v, dtype=torch.float)
+            if dist.is_initialized() and self.world_size > 1:
+                metric_tensor = metric_tensor.cuda()
                 dist.all_reduce(metric_tensor, op=dist.ReduceOp.SUM)
-            metric_tensor /= self.world_size
-            avg_metric[k] = metric_tensor
+                metric_tensor /= self.world_size
+            else:
+                metric_tensor = metric_tensor
+            avg_metric[k] = metric_tensor.item()
             
         if self.global_rank == 0:
             self.visual_logger.log_metric(metric=avg_metric, global_iter=global_iter)
