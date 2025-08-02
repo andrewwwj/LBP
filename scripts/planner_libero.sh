@@ -27,8 +27,6 @@ WARM_STEPS=$((4000/${NUM_PROCS}))
 LIBERO_TASK="libero_10"
 
 AVAILABLE_GPUS="0" # "6,7"
-MODEL_NAME="mid_planner_dnce_noise"
-
 TRAIN_ARGS=(
     --seed $SEED
     --output_dir $EXPERIMENT_NAME

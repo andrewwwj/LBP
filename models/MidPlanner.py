@@ -93,8 +93,8 @@ class MidImaginator(nn.Module):
         self.latent_planner = TriplePathPredictor(latent_dim=latent_dim, output_dim=self.latent_dim)
 
     def forward(self, cur_images, instruction, sub_goals, **kwargs):
-        sg = self.latent_proj.lang_proj(instruction)  # TODO replace with lang embedding of VLM
-        s0 = self.latent_proj.img_proj(cur_images[:, 0, ...])   # TODO replace with img embedding of VLM
+        sg = self.latent_proj.lang_proj(instruction)
+        s0 = self.latent_proj.img_proj(cur_images[:, 0, ...])
         B, G, C, H, W = sub_goals.shape  # subgoals: a series of images during training
         sub_goals = sub_goals.reshape(B*G, C, H, W)
         sub_goals = self.latent_proj.img_proj(sub_goals)
@@ -118,8 +118,8 @@ class MidImaginator(nn.Module):
                     last_subgoal = last_subgoal + noise
             target_subgoal = sub_goals[:, i, ...]   # ground truth
             # Recursively predict previous latent sub-goal given current one
-            pred_goal = self.latent_planner(s0, last_subgoal, sg)
-            # pred_goal = last_subgoal + self.latent_planner(s0, last_subgoal, sg)  # residual prediction
+            # pred_goal = self.latent_planner(s0, last_subgoal, sg)
+            pred_goal = last_subgoal + self.latent_planner(s0, last_subgoal, sg)  # residual prediction
             # Compare with the latent of ground truth
             loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_goal, target_subgoal)
 
@@ -132,12 +132,18 @@ class MidImaginator(nn.Module):
         s0 = self.latent_proj.img_proj(cur_images[:, 0, ...])
         planned_subgoals = [self.goal_rec(s0, sg)]
         for i in range(1, recursive_step):
-            pred_goal = self.latent_planner(s0, planned_subgoals[-1], sg)
+            last_subgoal = planned_subgoals[-1]
+            # pred_goal = self.latent_planner(s0, last_subgoal, sg)
+            pred_goal = last_subgoal + self.latent_planner(s0, last_subgoal, sg)  # residual prediction
             planned_subgoals.append(pred_goal)
         planned_subgoals = torch.cat([x.unsqueeze(1) for x in planned_subgoals], dim=1)
         return planned_subgoals, dict(planned_subgoals=planned_subgoals, img_latent=s0, lang_latent=sg)
 
 
 def mid_planner_dnce_noise(recursive_step=4, **kwargs):
-    return MidImaginator(recursive_step = recursive_step, state_random_noise = True, state_noise_strength = 0.1,
-                        loss_func = nn.MSELoss, loss_func_conig = dict(reduction='mean'), latent_info_file='assets/libero.pkl')
+    return MidImaginator(recursive_step = recursive_step,
+                         state_random_noise = True,
+                         state_noise_strength = 0.1,
+                         loss_func = nn.MSELoss,
+                         loss_func_conig = dict(reduction='mean'),
+                         latent_info_file='assets/libero.pkl')
