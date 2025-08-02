@@ -37,28 +37,18 @@ def format_time_hms(current_time, start_time=0):
     total_seconds = current_time - start_time
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
-    
     return total_seconds, f"{int(hours)}h {int(minutes)}m {seconds:.2f}s"
 
 def save_checkpoint(iter, model, optimizer, lr_scheduler, 
                     save_root, ckpt_name, save_model_only=True):
     os.makedirs(save_root, exist_ok=True)
-    try:
-        from torch.ao.optimize import unwrap_model
-        unwrapped_model = unwrap_model(model)
-    except (ImportError, AttributeError):
-        # If current torch doesn't support torch.ao, directly remove _orig_mod
-        if hasattr(model, '_orig_mod'):
-            unwrapped_model = model._orig_mod
-        else:
-            unwrapped_model = model
     if save_model_only:
-        model_dict = unwrapped_model.state_dict()
+        model_dict = model.state_dict()
         torch.save(model_dict, os.path.join(save_root, f"Model_{ckpt_name}.pth"))
     else:
         ckpt_dict = {
             'iter': iter,
-            'model': unwrapped_model.state_dict(),
+            'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
             'lr_scheduler': lr_scheduler.state_dict(),
         }

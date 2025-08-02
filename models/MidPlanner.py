@@ -40,6 +40,21 @@ class TriplePathPredictor(nn.Module):
         pred = self.predictor(s)
         return pred
 
+class FusionMlp(nn.Module):
+    def __init__(self, latent_dim=1024):
+        super().__init__()
+        self.fusion_mlp = Mlp(
+            in_features=latent_dim * 2, 
+            hidden_features=latent_dim * 2,
+            out_features=latent_dim,
+            norm_layer=nn.LayerNorm
+        )
+        self.apply(init_weight)
+
+    def forward(self, x, y):
+        fused = torch.cat([x, y], dim=-1)
+        return self.fusion_mlp(fused)
+
 class DnceLatentProj(nn.Module):
     def __init__(
         self,
@@ -91,6 +106,7 @@ class MidImaginator(nn.Module):
         self.latent_proj = DnceLatentProj(latent_info_file=latent_info_file)  # TODO replace with VLM
         self.goal_rec = DualPathPredictor(latent_dim=self.latent_dim, output_dim=self.latent_dim)
         self.latent_planner = TriplePathPredictor(latent_dim=latent_dim, output_dim=self.latent_dim)
+        self.fusion_layer = FusionMlp(latent_dim=latent_dim)
 
     def forward(self, cur_images, instruction, sub_goals, **kwargs):
         sg = self.latent_proj.lang_proj(instruction)
@@ -118,8 +134,9 @@ class MidImaginator(nn.Module):
                     last_subgoal = last_subgoal + noise
             target_subgoal = sub_goals[:, i, ...]   # ground truth
             # Recursively predict previous latent sub-goal given current one
-            # pred_goal = self.latent_planner(s0, last_subgoal, sg)
-            pred_goal = last_subgoal + self.latent_planner(s0, last_subgoal, sg)  # residual prediction
+            residual = self.latent_planner(s0, last_subgoal, sg)
+            # pred_goal = last_subgoal + residual # Direct prediction
+            pred_goal = self.fusion_layer(last_subgoal, residual) # Fused prediction
             # Compare with the latent of ground truth
             loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_goal, target_subgoal)
 
@@ -133,8 +150,9 @@ class MidImaginator(nn.Module):
         planned_subgoals = [self.goal_rec(s0, sg)]
         for i in range(1, recursive_step):
             last_subgoal = planned_subgoals[-1]
-            # pred_goal = self.latent_planner(s0, last_subgoal, sg)
-            pred_goal = last_subgoal + self.latent_planner(s0, last_subgoal, sg)  # residual prediction
+            residual = self.latent_planner(s0, last_subgoal, sg)
+            # pred_goal = last_subgoal + residual  # Direct prediction
+            pred_goal = self.fusion_layer(last_subgoal, residual) # Fused prediction
             planned_subgoals.append(pred_goal)
         planned_subgoals = torch.cat([x.unsqueeze(1) for x in planned_subgoals], dim=1)
         return planned_subgoals, dict(planned_subgoals=planned_subgoals, img_latent=s0, lang_latent=sg)

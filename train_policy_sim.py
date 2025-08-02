@@ -147,11 +147,11 @@ def main(config):
         config['world_size'] = world_size
         config['global_rank'] = global_rank
         config['local_rank'] = local_rank
-    counter = 1
-    base_path = config['output_dir']
-    while os.path.exists(config['output_dir']):
-        config['output_dir'] = f"{base_path}_exp{counter}"
-        counter += 1
+    # counter = 1
+    # base_path = config['output_dir']
+    # while os.path.exists(config['output_dir']):
+    #     config['output_dir'] = f"{base_path}_exp{counter}"
+    #     counter += 1
     logger = Logger(**config)
     logger.log_msg_every("init env ok")
     logger.log_msg_every(f"current device is: {torch.cuda.current_device()}")
