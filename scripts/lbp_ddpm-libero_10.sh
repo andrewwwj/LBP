@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PLANNER_DIR=$1 # Get planner directory from the first argument
+PLANNER_DIR=$1
 PLANNER_CKPT=$2
 SEED=$3
 NUM_PROCS=$4

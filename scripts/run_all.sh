@@ -7,6 +7,7 @@ PIN_MEMORY=True
 NUM_PROCS=1
 AVAILABLE_GPUS="0" # "0,1"
 BS_PER_PROC=64
+BS_TOTAL=$((NUM_PROCS * BS_PER_PROC))
 ITER_TOTAL=6400000
 SAVE_INTERVAL=10000
 LEARNING_RATE=3e-4
@@ -30,19 +31,22 @@ POLICY_USE_AC=True
 # --- Experiment Setup ---
 DATE=$(date +"%m%d")
 LIBERO_TASK="libero_10"
+BASE_DIR="runnings/${LIBERO_TASK}/${DATE}"
 DATASET_DIR="/home/andrew/pyprojects/datasets/Libero/256x256/processed"
-PLANNER_EXP_DIR="runnings/${DATE}_${LIBERO_TASK}_${PLANNER_MODEL_NAME}_bs$((NUM_PROCS*BS_PER_PROC))_seed${SEED}"
-BASE_PATH=$PLANNER_EXP_DIR
+PLANNER_EXP_DIR="${BASE_DIR}_${PLANNER_MODEL_NAME}_bs$(BS_TOTAL)_seed${SEED}"
+PLANNER_DIR=$PLANNER_EXP_DIR
 COUNTER=1
 while [ -d "$PLANNER_EXP_DIR" ]; do
-    PLANNER_EXP_DIR="${BASE_PATH}_exp${COUNTER}"
+    PLANNER_EXP_DIR="${PLANNER_DIR}_exp${COUNTER}"
     COUNTER=$((COUNTER + 1))
 done
 PLANNER_CKPT="Model_ckpt_100000.pth"
-POLICY_EXP_DIR="runnings/${DATE}_${LIBERO_TASK}_${MODEL_NAME}_hor${RECURSIVE_PLANNING_STEP}_bs$((NUM_PROCS*BS_PER_PROC))_seed${SEED}"
+POLICY_EXP_DIR="${BASE_DIR}_${POLICY_MODEL_NAME}_hor${POLICY_RECURSIVE_STEP}_bs$(BS_TOTAL)_seed${SEED}"
 
 # --- Script Execution ---
+echo "======================================================"
 echo "Running planner script..."
+echo "======================================================"
 bash scripts/planner_libero.sh \
     "${PLANNER_EXP_DIR}" \
     "${SEED}" \
@@ -71,7 +75,10 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+echo "======================================================"
 echo "Running policy script..."
+echo "Planner Checkpoint: ${PLANNER_EXP_DIR}/${PLANNER_CKPT}"
+echo "======================================================"
 bash scripts/lbp_ddpm-libero_10.sh \
     "${PLANNER_EXP_DIR}" \
     "${PLANNER_CKPT}" \
@@ -102,4 +109,6 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+echo "======================================================"
 echo "All scripts finished successfully."
+echo "======================================================"
