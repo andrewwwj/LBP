@@ -1,6 +1,6 @@
 #!/bin/bash
 export MUJOCO_GL="glx"  # handle issue AttributeError: 'MjRenderContextOffscreen' object has no attribute 'con'
-EXPERIMENT_NAME='0803_libero_10_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407'
+EXPERIMENT_NAME='0802_libero_10_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407' #'libero_10/0803_lbp_policy_ddpm_res34_libero_hor2_bs64_seed42'
 AVAILABLE_GPUS="0"
 TASK_NAME="libero_10" # ["libero_goal", "libero_spatial", "libero_10"]
 CKPT_PATH="runnings/${EXPERIMENT_NAME}"

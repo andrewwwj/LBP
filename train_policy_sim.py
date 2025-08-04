@@ -37,7 +37,7 @@ def get_args_parser():
     parser.add_argument('--rec_plan_coef', default=0.5, type=float)
 
     # Training Setting (essential)
-    parser.add_argument('--use_ddp', default=False, action='store_true')
+    parser.add_argument('--use_ddp', action='store_true')
     parser.add_argument('--learning_rate', '-lr', type=float, default=3e-4, help='learning rate (default: 3e-4)')
     parser.add_argument('--weight_decay', '-wd', default=0, type=float, help='Weight decay (default: 0)')
     parser.add_argument('--eta_min_lr', type=float, default=0, help='Minimum learning rate (default: 0)')
@@ -46,10 +46,11 @@ def get_args_parser():
     parser.add_argument('--warm_steps', default=2000, type=int)
     parser.add_argument('--log_interval', default=50, type=int, help='(default: 50 iter)')
     parser.add_argument('--resume_ckpt', default="", help='resume from checkpoint')
+    parser.add_argument('--debug', action='store_true')
 
     # Model Setting
     parser.add_argument('--model_name', default="bc_policy_res18_libero", type=str)
-    parser.add_argument('--imaginator_ckpt_path', default="runnings/mid_planner_libero_dnce/Model_ckpt_100000.pth", type=str)
+    parser.add_argument('--imaginator_ckpt_path', type=str)
 
     # Engine Setting
     parser.add_argument('--engine_name', default="build_libero_engine", type=str)
@@ -71,7 +72,7 @@ def get_args_parser():
 def prepare_training_components(config):
     # build model and engine
     model = create_model(**config)
-    model = torch.compile(model)
+    model = torch.compile(model) if not config['debug'] else model
     model = RoboModelWrapper(model)
     train_loader, agent = create_engine(**config)
     train_loader = DataLoaderWithTimeWrapper(train_loader, total_iters=config['num_iters'])

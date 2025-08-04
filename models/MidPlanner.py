@@ -32,7 +32,10 @@ class TriplePathPredictor(nn.Module):
                  latent_dim = 1024, 
                  output_dim = 1024):
         super().__init__()
-        self.predictor = Mlp(in_features=latent_dim * 3, hidden_features = latent_dim*4, out_features = output_dim, norm_layer=nn.LayerNorm)
+        self.predictor = Mlp(in_features=latent_dim * 3,
+                             hidden_features = latent_dim*4,
+                             out_features = output_dim,
+                             norm_layer=nn.LayerNorm)
         self.apply(init_weight)
         
     def forward(self, s0, s1, s2):
@@ -40,20 +43,39 @@ class TriplePathPredictor(nn.Module):
         pred = self.predictor(s)
         return pred
 
-class FusionMlp(nn.Module):
-    def __init__(self, latent_dim=1024):
+
+class TriPathResPredictor(nn.Module):
+    def __init__(self,
+                 latent_dim=1024,
+                 output_dim=1024):
         super().__init__()
-        self.fusion_mlp = Mlp(
-            in_features=latent_dim * 2, 
-            hidden_features=latent_dim * 2,
-            out_features=latent_dim,
-            norm_layer=nn.LayerNorm
-        )
+        self.mode = 'FiLM'  # 'GatedRes'
+        if self.mode == 'FiLM':
+            self.mlp = Mlp(in_features=latent_dim * 3,
+                           hidden_features=latent_dim * 4,
+                           out_features=output_dim * 2,
+                           norm_layer=nn.LayerNorm)
+        elif self.mode == 'GatedRes':
+            self.mlp = Mlp(in_features=latent_dim * 3,
+                           hidden_features=latent_dim * 4,
+                           out_features=output_dim + 1,
+                           norm_layer=nn.LayerNorm)
         self.apply(init_weight)
 
-    def forward(self, x, y):
-        fused = torch.cat([x, y], dim=-1)
-        return self.fusion_mlp(fused)
+    def forward(self, s0, s1, s2):
+        s = torch.cat([s0, s1, s2], dim=-1)
+        if self.mode == 'FiLM':
+            gamma_beta = self.mlp(s)
+            gamma, beta = torch.chunk(gamma_beta, 2, dim=-1)
+            pred = gamma * s1 + beta
+            return pred
+        elif self.mode == 'GatedRes':
+            x = self.mlp(s)
+            residual, gate = torch.split(x, [s1.size(-1), 1], dim=-1)
+            gate = torch.sigmoid(gate)
+            pred = s1 + gate * residual
+            return pred
+
 
 class DnceLatentProj(nn.Module):
     def __init__(
@@ -103,10 +125,10 @@ class MidImaginator(nn.Module):
         self.state_random_noise = state_random_noise
         self.state_noise_strength = state_noise_strength
         self.loss_func = loss_func(**loss_func_conig)
-        self.latent_proj = DnceLatentProj(latent_info_file=latent_info_file)  # TODO replace with VLM
+        self.latent_proj = DnceLatentProj(latent_info_file=latent_info_file)
         self.goal_rec = DualPathPredictor(latent_dim=self.latent_dim, output_dim=self.latent_dim)
-        self.latent_planner = TriplePathPredictor(latent_dim=latent_dim, output_dim=self.latent_dim)
-        self.fusion_layer = FusionMlp(latent_dim=latent_dim)
+        # self.latent_planner = TriplePathPredictor(latent_dim=latent_dim, output_dim=self.latent_dim)
+        self.latent_planner = TriPathResPredictor(latent_dim=latent_dim, output_dim=self.latent_dim)
 
     def forward(self, cur_images, instruction, sub_goals, **kwargs):
         sg = self.latent_proj.lang_proj(instruction)
@@ -134,9 +156,8 @@ class MidImaginator(nn.Module):
                     last_subgoal = last_subgoal + noise
             target_subgoal = sub_goals[:, i, ...]   # ground truth
             # Recursively predict previous latent sub-goal given current one
-            residual = self.latent_planner(s0, last_subgoal, sg)
-            # pred_goal = last_subgoal + residual # Direct prediction
-            pred_goal = self.fusion_layer(last_subgoal, residual) # Fused prediction
+            pred_goal = self.latent_planner(s0, last_subgoal, sg)
+            # pred_goal = last_subgoal + residual
             # Compare with the latent of ground truth
             loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_goal, target_subgoal)
 
@@ -150,9 +171,8 @@ class MidImaginator(nn.Module):
         planned_subgoals = [self.goal_rec(s0, sg)]
         for i in range(1, recursive_step):
             last_subgoal = planned_subgoals[-1]
-            residual = self.latent_planner(s0, last_subgoal, sg)
-            # pred_goal = last_subgoal + residual  # Direct prediction
-            pred_goal = self.fusion_layer(last_subgoal, residual) # Fused prediction
+            pred_goal = self.latent_planner(s0, last_subgoal, sg)
+            # pred_goal = last_subgoal + residual
             planned_subgoals.append(pred_goal)
         planned_subgoals = torch.cat([x.unsqueeze(1) for x in planned_subgoals], dim=1)
         return planned_subgoals, dict(planned_subgoals=planned_subgoals, img_latent=s0, lang_latent=sg)

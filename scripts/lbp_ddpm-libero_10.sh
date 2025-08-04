@@ -16,17 +16,17 @@ LEARNING_RATE=${13}
 WEIGHT_DECAY=${14}
 ETA_MIN_LR=${15}
 LOG_INTERVAL=${16}
-RECURSIVE_PLANNING_STEP=${17}
-DATASET_DIR=${18}
-LIBERO_TASK=${19}
-NUM_WORKERS=${20}
-PIN_MEMORY=${21}
-EXPERIMENT_NAME=${22}
-AVAILABLE_GPUS=${23}
+WARM_STEPS=${17}
+RECURSIVE_PLANNING_STEP=${18}
+DATASET_DIR=${19}
+TASK_NAME=${20}
+NUM_WORKERS=${21}
+PIN_MEMORY=${22}
+EXPERIMENT_NAME=${23}
+AVAILABLE_GPUS=${24}
 
 BS_TOTAL=$((NUM_PROCS * BS_PER_PROC))
 NUM_ITERS=$((ITER_TOTAL / BS_TOTAL))
-WARM_STEPS=$((4000/${NUM_PROCS}))
 
 TRAIN_ARGS=(
     --seed $SEED
@@ -36,7 +36,7 @@ TRAIN_ARGS=(
     --chunk_length $CHUNK_LENGTH 
     --model_name $MODEL_NAME 
     --engine_name $ENGINE_NAME 
-    --dataset_path $DATASET_DIR/$LIBERO_TASK
+    --dataset_path $DATASET_DIR/$TASK_NAME
     --img_size $IMG_SIZE 
     --batch_size $BS_PER_PROC
     --pin_mem $PIN_MEMORY
@@ -53,10 +53,10 @@ TRAIN_ARGS=(
 )
 
 if [ $NUM_PROCS -eq 1 ]; then
-    echo "Running with a single GPU..."
+    echo "--- Running with a single GPU... ---"
     python train_policy_sim.py "${TRAIN_ARGS[@]}"
 else
-    echo "Running with $NUM_PROCS GPUs using torchrun..."
+    echo "--- Running with $NUM_PROCS GPUs using torchrun... ---"
     PORT=26501
     torchrun \
         --nproc_per_node=${NUM_PROCS} \
