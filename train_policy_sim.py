@@ -29,7 +29,7 @@ def get_args_parser():
     
     # Base Setting (shared or essential)
     parser.add_argument('--seed', default=42, type=int)
-    parser.add_argument('--logger_type', default='wandb')
+    parser.add_argument('--logger_type', default='tensorboard')
     parser.add_argument('--output_dir', default='runnings/')
     parser.add_argument('--gpus', default='0,1', help='List of available gpus')
     parser.add_argument('--chunk_length', default=6, type=int) # shared by engine and model
@@ -164,6 +164,7 @@ def main(config):
     # training
     model, train_loader, optimizer, lr_scheduler = prepare_training_components(config)
     train(config, logger, model, train_loader, optimizer, lr_scheduler)
+    logger.finish()
     if config['use_ddp']:
         close_ddp_env()
 

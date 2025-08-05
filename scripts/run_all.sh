@@ -1,4 +1,5 @@
 #!/bin/bash
+#export WANDB_START_METHOD=thread
 
 RUN_PLANNER=1
 RUN_POLICY=1
@@ -35,9 +36,11 @@ PLANNER_MODEL_NAME="mid_planner_dnce_noise"
 PLANNER_RECURSIVE_STEP=4
 PLANNER_REC_PLAN_COEF=0.5
 PLANNER_EXP_DIR="${BASE_DIR}/$(date +"%m-%d")_${PLANNER_MODEL_NAME}_bs${BS_PER_PROC}_seed${SEED}"
+#PLANNER_EXP_DIR="runnings/0731_libero_10_mid_planner_dnce_noise_bs64_seed3407"  # if choose certain checkpoint
+PLANNER_CKPT="Model_ckpt_100000.pth"
 
 # --- Policy-Specific Configuration --- #
-POLICY_ITER_TOTAL=12800000
+POLICY_ITER_TOTAL=6400000
 POLICY_MODEL_NAME="lbp_policy_ddpm_res34_libero"
 POLICY_RECURSIVE_STEP=2
 POLICY_CHUNK_LENGTH=6
@@ -48,7 +51,7 @@ POLICY_EXP_DIR="${BASE_DIR}/$(date +"%m-%d")_${POLICY_MODEL_NAME}_hor${POLICY_RE
 if [ $RUN_PLANNER = 1 ]; then
   echo "======================================================"
   echo "Running planner script..."
-  echo "Checkpoint Directory: ${PLANNER_EXP_DIR}"
+  echo "Planner Checkpoint: ${PLANNER_EXP_DIR}"
   echo "======================================================"
   bash scripts/planner_libero.sh \
       "${PLANNER_EXP_DIR}" \
@@ -80,11 +83,10 @@ if [ $RUN_PLANNER = 1 ]; then
 fi
 
 if [ $RUN_POLICY = 1 ]; then
-  # PLANNER_EXP_DIR="0803_mid_planner_dnce_noise_bs64_seed42"  # if choose certain checkpoint
-  # PLANNER_CKPT="Model_ckpt_100000.pth"
   echo "======================================================"
   echo "Running policy script..."
   echo "Planner Checkpoint: ${PLANNER_EXP_DIR}/${PLANNER_CKPT}"
+  echo "Policy Checkpoint: ${POLICY_EXP_DIR}"
   echo "======================================================"
   bash scripts/lbp_ddpm-libero_10.sh \
       "${PLANNER_EXP_DIR}" \

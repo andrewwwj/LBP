@@ -135,7 +135,7 @@ class LiberoDataset(Dataset):
         traj_paths = dataset_statistics['traj_paths']
         traj_lens = dataset_statistics['traj_lens']
         self.views = dataset_statistics['views']
-        self.main_view = self.views[0]
+        self.main_view = self.views[0]  # third_image
         self.metas = []
         for i in range(len(traj_paths)):
             traj_path = traj_paths[i]
@@ -144,12 +144,10 @@ class LiberoDataset(Dataset):
             self.metas.extend([(traj_paths[i], j, traj_lens[i]-1) for j in range(traj_lens[i])])
 
     def _load_from_raw_traj(self, f, cur_idx, goal_idx):
+        assert self.main_view == self.views[0] and self.main_view == 'third_image'
         # load images from all views
         raw_images = []
         for view in self.views:
-            # encoded_data = f['observation'][view][cur_idx]  # HDF5에서 바이트 배열 추출 (numpy array)
-            # img = Image.open(io.BytesIO(encoded_data))
-            # raw_img = np.array(img)
             raw_img = cv2.imdecode(f['observation'][view][cur_idx], cv2.IMREAD_COLOR)
             # Visualize the image
             # import matplotlib.pyplot as plt
@@ -160,11 +158,10 @@ class LiberoDataset(Dataset):
         # load subgoals
         subgoals = []
         for i in range(self.recursive_step):
-            # encoded_data = f['observation'][self.main_view][goal_idx]  # HDF5에서 바이트 배열 추출
-            # img = Image.open(io.BytesIO(encoded_data))
-            # raw_img = np.array(img)
+            # print(goal_idx)
             raw_img = cv2.imdecode(f['observation'][self.main_view][goal_idx], cv2.IMREAD_COLOR)
             subgoals.append(raw_img)
+            # Move rec_plan_coef * dist(goal-current) from cur_idx = Approach to current idx
             goal_idx = cur_idx + int((goal_idx - cur_idx) * self.rec_plan_coef)
         # load actions with chunking
         np_action = f['action'][()][cur_idx: cur_idx + self.chunk_length]

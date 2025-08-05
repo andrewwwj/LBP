@@ -73,7 +73,7 @@ class TriPathResPredictor(nn.Module):
             x = self.mlp(s)
             residual, gate = torch.split(x, [s1.size(-1), 1], dim=-1)
             gate = torch.sigmoid(gate)
-            pred = s1 + gate * residual
+            pred = (1 - gate) * s1 + gate * residual
             return pred
 
 
@@ -127,8 +127,8 @@ class MidImaginator(nn.Module):
         self.loss_func = loss_func(**loss_func_conig)
         self.latent_proj = DnceLatentProj(latent_info_file=latent_info_file)
         self.goal_rec = DualPathPredictor(latent_dim=self.latent_dim, output_dim=self.latent_dim)
-        # self.latent_planner = TriplePathPredictor(latent_dim=latent_dim, output_dim=self.latent_dim)
-        self.latent_planner = TriPathResPredictor(latent_dim=latent_dim, output_dim=self.latent_dim)
+        self.latent_planner = TriplePathPredictor(latent_dim=latent_dim, output_dim=self.latent_dim)
+        # self.latent_planner = TriPathResPredictor(latent_dim=latent_dim, output_dim=self.latent_dim)
 
     def forward(self, cur_images, instruction, sub_goals, **kwargs):
         sg = self.latent_proj.lang_proj(instruction)
@@ -140,26 +140,28 @@ class MidImaginator(nn.Module):
         
         loss_dict = {}
         # Predict previous latents of the last sub-goal
-        pred_goal = self.goal_rec(s0, sg)
+        pred_subgoal = self.goal_rec(s0, sg)
         # compare with the latent of ground truth
-        loss_dict[f"loss_latent_zg"] = self.loss_func(pred_goal, sub_goals[:, 0, ...])
+        loss_dict[f"loss_latent_zg"] = self.loss_func(pred_subgoal, sub_goals[:, 0, ...])
 
         # Recursive sub-goal prediction
         use_pred_goal = torch.rand(1).item() < 0.5
         for i in range(1, self.recursive_step):
             if use_pred_goal:
-                last_subgoal = pred_goal
+            # if i != 1 and use_pred_goal:
+                last_subgoal = pred_subgoal
             else:
                 last_subgoal = sub_goals[:, i - 1, ...]
-                if self.state_random_noise:  # State augmentation
+                # State augmentation
+                if self.state_random_noise:
                     noise = torch.randn_like(last_subgoal) * self.state_noise_strength
                     last_subgoal = last_subgoal + noise
             target_subgoal = sub_goals[:, i, ...]   # ground truth
             # Recursively predict previous latent sub-goal given current one
-            pred_goal = self.latent_planner(s0, last_subgoal, sg)
+            pred_subgoal = self.latent_planner(s0, last_subgoal, sg)
             # pred_goal = last_subgoal + residual
             # Compare with the latent of ground truth
-            loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_goal, target_subgoal)
+            loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_subgoal, target_subgoal)
 
         loss = sum(loss_dict.values()) / len(loss_dict)
         loss_dict['loss'] = loss

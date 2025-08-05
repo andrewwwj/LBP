@@ -60,18 +60,24 @@ class Logger(object):
         if self.global_rank == 0:
             self.visual_logger.log_metric(metric=avg_metric, global_iter=global_iter)
 
+    def finish(self):
+        if self.global_rank == 0 and hasattr(self.visual_logger, 'finish'):
+            self.visual_logger.finish()
 
 class WandbLogger(object):
     def __init__(self, output_dir):
         nowTime = datetime.datetime.now().strftime('%y-%m-%d-%H-%M-%S')
         wandb.init(
-            project="RSP",
+            project="LBP",
             name=f"{output_dir.split('/')[-1]}_{nowTime}",
-            mode="online"
+            # mode="online"
         )
     
     def log_metric(self, metric, **kwargs): 
         wandb.log(metric)
+
+    def finish(self):
+        wandb.finish()
 
 class TensorboardLogger(object):
     def __init__(self, output_dir):
@@ -80,3 +86,6 @@ class TensorboardLogger(object):
     def log_metric(self, metric, global_iter, **kwargs):
         for k, v in metric.items():
             self.writer.add_scalar(k, v, global_iter)
+
+    def finish(self):
+        self.writer.close()

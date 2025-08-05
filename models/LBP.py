@@ -35,7 +35,7 @@ class LBPPolicy(nn.Module):
         super().__init__()
         # condition encoder
         self.imaginator = mid_planner_dnce_noise(recursive_step=4)
-        state_dict = torch.load(imaginator_ckpt_path, weights_only=True, map_location='cpu')
+        state_dict = torch.load(imaginator_ckpt_path, map_location='cpu')
         # handle prefix from torch.compile
         tc_prefix = '_orig_mod.'
         for k, v in list(state_dict.items()):
