@@ -36,7 +36,7 @@ class LBPPolicy(nn.Module):
         # condition encoder
         self.imaginator = mid_planner_dnce_noise(recursive_step=4)
         state_dict = torch.load(imaginator_ckpt_path, map_location='cpu')
-        # handle prefix from torch.compile
+        # handle prefix of torch.compile
         tc_prefix = '_orig_mod.'
         for k, v in list(state_dict.items()):
             if k.startswith(tc_prefix):
@@ -61,10 +61,10 @@ class LBPPolicy(nn.Module):
         # action decoder
         self.decoder_head = decoder_head
         if decoder_head == 'base':
-            self.head = BaseHead(num_blocks=policy_num_blocks, input_dim=self.vision_dim + self.proprio_dim + self.latent_dim, 
+            self.head = BaseHead(num_blocks=policy_num_blocks, input_dim=self.vision_dim + self.proprio_dim + self.latent_dim,
                                 hidden_dim=policy_hidden_dim, action_size=action_size * chunk_length)
         elif decoder_head == 'ddpm':
-            self.head = DDPMHead(num_blocks=policy_num_blocks, input_dim=self.vision_dim + self.proprio_dim + self.latent_dim,  
+            self.head = DDPMHead(num_blocks=policy_num_blocks, input_dim=self.vision_dim + self.proprio_dim + self.latent_dim,
                                 hidden_dim=policy_hidden_dim, action_size=action_size * chunk_length)
         else :
             raise NotImplementedError
@@ -87,7 +87,7 @@ class LBPPolicy(nn.Module):
         vision_semantics = vision_semantics.reshape(B, -1)
         all_obs = torch.cat([vision_semantics, cur_proprios, fused_goal], dim=-1)
         return all_obs
-    
+
     def forward_head(self, all_obs, cur_actions):
         if self.decoder_head == 'base':
             pred_actions = self.head(all_obs)
@@ -110,14 +110,14 @@ class LBPPolicy(nn.Module):
         loss = self.forward_head(all_obs, cur_actions)
         # Note: 'loss' must be in the dict
         return loss, dict(loss=loss)
-    
+
     def generate(self, cur_images, cur_proprios, instruction, **kwargs):
         conditions, fused_goal = self.forward_cond(cur_images, instruction)
         all_obs = self.forward_obs(cur_images, cur_proprios, conditions, fused_goal)
         pred_actions = self.generate_head(all_obs)
         # Note: 'actions' must be in the dict
         return pred_actions, dict(actions=pred_actions)
-    
+
 
 
 def lbp_policy_ddpm_res18_libero(imaginator_ckpt_path, chunk_length=6, recursive_step=2, **kwargs):

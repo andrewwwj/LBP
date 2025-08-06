@@ -145,23 +145,24 @@ class MidImaginator(nn.Module):
         loss_dict[f"loss_latent_zg"] = self.loss_func(pred_subgoal, sub_goals[:, 0, ...])
 
         # Recursive sub-goal prediction
-        use_pred_goal = torch.rand(1).item() < 0.5
-        for i in range(1, self.recursive_step):
-            if use_pred_goal:
-            # if i != 1 and use_pred_goal:
+        random_number = random.random()
+        if random_number < 0.5:
+            for i in range(1, self.recursive_step):
+                # latent planners
                 last_subgoal = pred_subgoal
-            else:
-                last_subgoal = sub_goals[:, i - 1, ...]
-                # State augmentation
+                target_subgoal = sub_goals[:, i, ...]
+                pred_subgoal = self.latent_planner(s0, last_subgoal, sg)
+                loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_subgoal, target_subgoal)
+        else :
+            for i in range(1, self.recursive_step):
+                # latent planners
+                last_subgoal = sub_goals[:, i-1, ...]
+                target_subgoal = sub_goals[:, i, ...]
                 if self.state_random_noise:
-                    noise = torch.randn_like(last_subgoal) * self.state_noise_strength
-                    last_subgoal = last_subgoal + noise
-            target_subgoal = sub_goals[:, i, ...]   # ground truth
-            # Recursively predict previous latent sub-goal given current one
-            pred_subgoal = self.latent_planner(s0, last_subgoal, sg)
-            # pred_goal = last_subgoal + residual
-            # Compare with the latent of ground truth
-            loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_subgoal, target_subgoal)
+                    random_noise = torch.randn_like(last_subgoal) * self.state_noise_strength
+                    last_subgoal = last_subgoal + random_noise
+                pred_subgoal = self.latent_planner(s0, last_subgoal, sg)
+                loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_subgoal, target_subgoal)
 
         loss = sum(loss_dict.values()) / len(loss_dict)
         loss_dict['loss'] = loss
