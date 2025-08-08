@@ -42,13 +42,17 @@ def format_time_hms(current_time, start_time=0):
 def save_checkpoint(iter, model, optimizer, lr_scheduler, 
                     save_root, ckpt_name, save_model_only=True):
     os.makedirs(save_root, exist_ok=True)
-    model_dict = model.state_dict()
+    state_dict = model.state_dict()
+    # Handle torch.compile
+    for key in list(state_dict.keys()):
+        if key.startswith('_orig_mod.'):
+            state_dict[key.replace('_orig_mod.', '')] = state_dict.pop(key)
     if save_model_only:
-        torch.save(model_dict, os.path.join(save_root, f"Model_{ckpt_name}.pth"))
+        torch.save(state_dict, os.path.join(save_root, f"Model_{ckpt_name}.pth"))
     else:
         ckpt_dict = {
             'iter': iter,
-            'model': model_dict,
+            'model': state_dict,
             'optimizer': optimizer.state_dict(),
             'lr_scheduler': lr_scheduler.state_dict(),
         }

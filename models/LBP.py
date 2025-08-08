@@ -6,7 +6,6 @@
 # import math
 import torch
 import torch.nn as nn
-
 # from .components.MlpResNet import MlpResNet
 from .components.ResNet import FilmResNet
 from .components.ActionHead import BaseHead, DDPMHead
@@ -31,17 +30,14 @@ class LBPPolicy(nn.Module):
         loss_func_conig = dict(reduction='mean'),
         recursive_step = 2,
         num_attn_layers = 3,
+        **kwargs,
     ):
         super().__init__()
         # condition encoder
-        self.imaginator = mid_planner_dnce_noise(recursive_step=4)
         state_dict = torch.load(imaginator_ckpt_path, map_location='cpu')
-        # handle prefix of torch.compile
-        tc_prefix = '_orig_mod.'
-        for k, v in list(state_dict.items()):
-            if k.startswith(tc_prefix):
-                state_dict[k[len(tc_prefix):]] = state_dict.pop(k)
+        self.imaginator = mid_planner_dnce_noise(recursive_step=4)
         self.imaginator.load_state_dict(state_dict, strict=True)  # load trained planner
+        self.imaginator.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else self.imaginator
         self.imaginator.requires_grad_(False)  # Freeze pre-trained planner
         self.recursive_step = recursive_step
         self.latent_dim = 1024
@@ -123,10 +119,10 @@ class LBPPolicy(nn.Module):
 def lbp_policy_ddpm_res18_libero(imaginator_ckpt_path, chunk_length=6, recursive_step=2, **kwargs):
     return LBPPolicy(proprio_input_dim=9, proprio_hidden_dim=32, vision_backbone_name="resnet18", decoder_head='ddpm',
                     num_attn_layers=3, recursive_step=recursive_step, imaginator_ckpt_path=imaginator_ckpt_path,
-                    policy_num_blocks=3, policy_hidden_dim=256, action_size=7, chunk_length=chunk_length)
+                    policy_num_blocks=3, policy_hidden_dim=256, action_size=7, chunk_length=chunk_length, **kwargs)
 
 
 def lbp_policy_ddpm_res34_libero(imaginator_ckpt_path, chunk_length=6, recursive_step=2, **kwargs):
     return LBPPolicy(proprio_input_dim=9, proprio_hidden_dim=32, vision_backbone_name="resnet34", decoder_head='ddpm',
                     num_attn_layers=3, recursive_step=recursive_step, imaginator_ckpt_path=imaginator_ckpt_path,
-                    policy_num_blocks=3, policy_hidden_dim=256, action_size=7, chunk_length=chunk_length)
+                    policy_num_blocks=3, policy_hidden_dim=256, action_size=7, chunk_length=chunk_length, **kwargs)

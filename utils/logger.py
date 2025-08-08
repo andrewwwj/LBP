@@ -70,7 +70,7 @@ class WandbLogger(object):
         wandb.init(
             project="LBP",
             name=f"{output_dir.split('/')[-1]}_{nowTime}",
-            # mode="online"
+            mode="offline"
         )
     
     def log_metric(self, metric, **kwargs): 

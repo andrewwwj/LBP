@@ -78,10 +78,7 @@ class TriPathResPredictor(nn.Module):
 
 
 class DnceLatentProj(nn.Module):
-    def __init__(
-        self,
-        latent_info_file='assets/libero.pkl'
-    ):
+    def __init__(self, latent_info_file='assets/libero.pkl'):
         super().__init__()
         self.latent_proj = DecisionNCE.load("DecisionNCE-T", device="cuda")  # Load pre-trained model
         self.latent_proj.requires_grad_(False)  # Freeze pre-trained model

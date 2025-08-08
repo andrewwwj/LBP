@@ -32,7 +32,9 @@ def main():
 
         model = create_model(**config)
         ckpt_file = os.path.join(ckpt_path, file)
-        model.load_state_dict(torch.load(ckpt_file, map_location='cpu'), strict=False)
+        state_dict = torch.load(ckpt_file, map_location='cpu')
+        model.load_state_dict(state_dict, strict=True)
+        model.compile(mode="max-autotune-no-cudagraphs", dynamic=False)
         model = RoboModelWrapper(model)
         _, agent = create_engine(**config)
 

@@ -15,7 +15,7 @@ from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm
 
 def build_base_transform(n_px, aug=True, to_tensor=True, apply_norm=True,
-                        crop_scale=(0.75,1.0), crop_ratio=(0.75, 1.33), crop_prob=1.0, flip_prob=0.5, jitter_prob=0.5, 
+                        crop_scale=(0.75,1.0), crop_ratio=(0.75, 1.33), crop_prob=1.0, flip_prob=0.5, jitter_prob=0.5,
                         jitter_bright=0.1, jitter_contrast=0, jitter_saturation=0, jitter_hue=0,
                         norm_mean = (0.485, 0.456, 0.406), norm_std=(0.229, 0.224, 0.225)):
     base_transform = []
@@ -25,7 +25,7 @@ def build_base_transform(n_px, aug=True, to_tensor=True, apply_norm=True,
                                                   scale=crop_scale, ratio=crop_ratio))
         # base_transform.append(A.VerticalFlip(p=flip_prob))
         # base_transform.append(A.HorizontalFlip(p=flip_prob))
-        # base_transform.append(A.ColorJitter(brightness=jitter_bright, contrast=jitter_contrast, 
+        # base_transform.append(A.ColorJitter(brightness=jitter_bright, contrast=jitter_contrast,
         #                                     saturation=jitter_saturation, hue=jitter_hue, p=jitter_prob))
     else :
         base_transform.append(A.Resize(height=n_px, width=n_px))
@@ -85,7 +85,7 @@ class LiberoProcessor(object):
         # fix parameters
         self.action_length = 7
         self.proprio_length = 9
-    
+
     def preprocess_image(self, img, replay_params=None):
         if replay_params == None:
             transformed = self.img_transform(image=img)
@@ -95,17 +95,17 @@ class LiberoProcessor(object):
             transformed = A.ReplayCompose.replay(replay_params, image=img)
             transformed_image = transformed['image']
         return transformed_image, replay_params
-    
+
     def preprocess_action(self, action):
         action = (action - self.action_min) / (self.action_max - self.action_min) * 2 - 1
         action = torch.flatten(torch.from_numpy(action))
         return action
-    
+
     def preprocess_proprio(self, proprio):
         proprio = (proprio - self.proprio_min) / (self.proprio_max - self.proprio_min) * 2 - 1
         proprio = torch.flatten(torch.from_numpy(proprio))
         return proprio
-    
+
     def postprocess_action(self, tensor_flatten_action):
         # action B 42 -> B 6 7
         B, _ = tensor_flatten_action.shape
@@ -116,7 +116,7 @@ class LiberoProcessor(object):
 
 
 class LiberoDataset(Dataset):
-    def __init__(self, dataset_path, processor, chunk_length=6, 
+    def __init__(self, dataset_path, processor, chunk_length=6,
                  recursive_step=4, rec_plan_coef=0.5):
         self.processor = processor
         self.dataset_path = dataset_path
@@ -147,22 +147,23 @@ class LiberoDataset(Dataset):
         assert self.main_view == self.views[0] and self.main_view == 'third_image'
         # load images from all views
         raw_images = []
+        observations = f['observation']
         for view in self.views:
-            raw_img = cv2.imdecode(f['observation'][view][cur_idx], cv2.IMREAD_COLOR)
+            raw_img = cv2.imdecode(observations[view][cur_idx], cv2.IMREAD_COLOR)
+            raw_images.append(raw_img)
             # Visualize the image
             # import matplotlib.pyplot as plt
             # img_rgb = cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB)
             # plt.figure(figsize=(8, 8))
             # plt.imshow(img_rgb); plt.axis('off'); plt.show()
-            raw_images.append(raw_img)
         # load subgoals
         subgoals = []
         for i in range(self.recursive_step):
             # print(goal_idx)
-            raw_img = cv2.imdecode(f['observation'][self.main_view][goal_idx], cv2.IMREAD_COLOR)
+            raw_img = cv2.imdecode(observations[self.main_view][goal_idx], cv2.IMREAD_COLOR)
             subgoals.append(raw_img)
-            # Move rec_plan_coef * dist(goal-current) from cur_idx = Approach to current idx
             goal_idx = cur_idx + int((goal_idx - cur_idx) * self.rec_plan_coef)
+            # Move rec_plan_coef * dist(goal-current) from cur_idx = Approach to current idx
         # load actions with chunking
         np_action = f['action'][()][cur_idx: cur_idx + self.chunk_length]
         # np_action = f['action'][cur_idx: cur_idx + self.chunk_length]
@@ -177,15 +178,15 @@ class LiberoDataset(Dataset):
         return raw_images, subgoals, np_action, raw_proprio, instruction
 
     def __len__(self):
-        return len(self.metas) 
-    
+        return len(self.metas)
+
     def __getitem__(self, index):
         meta = self.metas[index]
         traj_path, cur_idx, goal_idx = meta[0], meta[1], meta[2]
         f = self.traj_files[traj_path]
         raw_images, subgoals, np_action, raw_proprio, instruction = self._load_from_raw_traj(f, cur_idx, goal_idx)
         cur_image, replay_params = self.processor.preprocess_image(raw_images[0])
-        final_images = [cur_image, *[self.processor.preprocess_image(img)[0] for img in raw_images[1:]]]
+        final_images = [cur_image, *[self.processor.preprocess_image(img, replay_params)[0] for img in raw_images[1:]]]
         subgoals = [self.processor.preprocess_image(img, replay_params)[0] for img in subgoals]
         final_images = torch.stack(final_images)
         subgoals = torch.stack(subgoals)
@@ -217,7 +218,7 @@ class LiberoAgent(object):
 
     def _init_action_chunking(self, eval_horizon: int=600, num_samples: int=1):
         self.all_time_actions = np.ones([num_samples, eval_horizon, eval_horizon+50, 7]) * self.constant
-    
+
     def get_ac_action(self, actions, t: int, k: float=0.25):
         B, N, D = actions.shape
         self.all_time_actions[:, [t], t:t+N] = np.expand_dims(actions, axis=1)   # B, horizon, horizon+ac_num, 7
@@ -229,7 +230,7 @@ class LiberoAgent(object):
         actions = (actions_for_curr_step * exp_weights).sum(axis=1)
         actions[..., -1] = np.sign(actions[..., -1])
         return actions
-    
+
     def get_action(self, agent_view_images, wrist_view_images, raw_proprio, instruction, t=-1):
         # agent_view_images B H W 3
         # wrist_view_images B H W 3
@@ -263,10 +264,10 @@ def build_libero_processor(dataset_path, img_size=224, training=True):
 def build_libero_dataloader(dataset_path, processor, chunk_length=6, recursive_step=4, rec_plan_coef=0.5,
                         batch_size=2, num_workers=2, shuffle=True, pin_mem=True, drop_last=True,
                         world_size=1, global_rank=0):
-    
+
     train_dataset = LiberoDataset(dataset_path=dataset_path, processor=processor, chunk_length=chunk_length,
                                   recursive_step=recursive_step, rec_plan_coef=rec_plan_coef)
-    sampler = DistributedSampler(train_dataset, shuffle=shuffle, num_replicas=world_size, rank=global_rank) 
+    sampler = DistributedSampler(train_dataset, shuffle=shuffle, num_replicas=world_size, rank=global_rank)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=num_workers,
                                  sampler=sampler, pin_memory=pin_mem, drop_last=drop_last, persistent_workers=True)
     return train_dataloader
@@ -282,12 +283,12 @@ def build_libero_engine(dataset_path, img_size=224, # processor
                         world_size=1, global_rank=0, # dataloader
                         use_ac=True, # agent
                         **kwargs):
-    
+
     processor = build_libero_processor(dataset_path, img_size=img_size, training=True)
-    train_dataloader = build_libero_dataloader(dataset_path, processor=processor, chunk_length=chunk_length, 
+    train_dataloader = build_libero_dataloader(dataset_path, processor=processor, chunk_length=chunk_length,
                                                recursive_step=recursive_step, rec_plan_coef=rec_plan_coef,
-                                               batch_size=batch_size, num_workers=num_workers, 
-                                               shuffle=shuffle, pin_mem=pin_mem, drop_last=drop_last, 
+                                               batch_size=batch_size, num_workers=num_workers,
+                                               shuffle=shuffle, pin_mem=pin_mem, drop_last=drop_last,
                                                world_size=world_size, global_rank=global_rank)
     processor = build_libero_processor(dataset_path, img_size=img_size, training=False)
     agent = build_libero_agent(processor=processor, use_ac=use_ac)
@@ -325,7 +326,7 @@ class LIBEROEval():
                 obs_key: list=['agentview_image', 'robot0_eye_in_hand_image', 'robot0_gripper_qpos', 'robot0_eef_pos', 'robot0_eef_quat'],
                 data_statistics: dict=None, logger = None, eval_horizon: int=600, camera_heights=256, camera_widths=256,
                 num_episodes: int=10, eval_freq: int=10, seed: int=42, rank: int=0):
-        
+
         self.task_suite_name = task_suite_name
         self.task_list = LIBERO_DATASETS[self.task_suite_name]
         self.task_suite_list = [benchmark_dict[task]() for task in self.task_list]
@@ -348,7 +349,7 @@ class LIBEROEval():
             if not os.path.exists(path):
                 os.makedirs(path)
             self.base_dir = path
-    
+
     def _init_env(self, task_suite, task_id: int=0):
         # get task information and env args
         task = task_suite.get_task(task_id)
@@ -364,28 +365,28 @@ class LIBEROEval():
             "camera_heights": self.camera_heights,
             "camera_widths": self.camera_widths
         }
-        
+
         # init thesubprocess vector environment
         env_num = self.num_episodes
         env = SubprocVectorEnv(
             [lambda: OffScreenRenderEnv(**env_args) for _ in range(env_num)]
         )
-        
-        # environment reset 
+
+        # environment reset
         env.seed(self.seed + 100)
         env.reset()
         init_states = task_suite.get_task_init_states(task_id) # for benchmarking purpose, we fix the a set of initial states
         init_state_id = np.arange(self.num_episodes) % init_states.shape[0]
         obs = env.set_init_state(init_states[init_state_id])
-        
+
         # return the environment
         env_dict = {}
         env_dict['env'] = env
         env_dict['language_instruction'] = task_description
         env_dict['obs'] = obs
-            
+
         return env_dict
-    
+
     def _log_results(self, metrics: dict, steps: int):
         if self.logger is None:
             # just print out and save the results and pass
@@ -398,7 +399,7 @@ class LIBEROEval():
             # log the results to the logger
             self.logger.log_metrics(metrics, steps)
             self.logger.save_metrics(metrics, steps, self.base_dir)
-    
+
     def raw_obs_to_stacked_obs(self, obs, lang):
         env_num = len(obs)
         data = {
@@ -406,27 +407,27 @@ class LIBEROEval():
             "lang": lang,
         }
         for key in self.obs_key:
-            data["obs"][key] = []       
+            data["obs"][key] = []
         for i in range(env_num):
             for key in self.obs_key:
                 data['obs'][key].append(obs[i][key])
         for key in data['obs']:
             data['obs'][key] = np.stack(data['obs'][key])
         return data
-    
+
 
     def _rollout(self, task_suite, policy, task_id: int=0):
         """
         rollout one episode and return the episode return
         """
-        
+
         if self.use_ac:
             policy._init_action_chunking(eval_horizon=self.eval_horizon, num_samples=self.num_episodes)
-        
+
         env = self._init_env(task_suite, task_id)
         lang = env['language_instruction']
         obs = env['obs']
-        
+
         for t in range(5):
             init_action = np.array([[0.,0.,0.,0.,0.,0.,-1.]]).repeat(self.num_episodes, axis=0)
             obs, reward, done, info = env['env'].step(init_action)
@@ -454,7 +455,7 @@ class LIBEROEval():
                 break
         save_path = f'{self.base_dir}/{lang}.mp4'
         self._save_video(save_path, images, done, fps=30)
-        
+
         num_success = 0
         for k in range(self.num_episodes):
             num_success += int(done[k])
@@ -463,8 +464,8 @@ class LIBEROEval():
         self._log_results(metrics, self.step)
         env['env'].close()
         return avg_succ_rate
-    
-    def _save_video(self, save_path: str, images: list, done: list, fps=30): 
+
+    def _save_video(self, save_path: str, images: list, done: list, fps=30):
         imageio.mimsave(save_path, images, fps=fps)
 
     def eval_episodes(self, policy, steps: int, save_path: str):
@@ -473,7 +474,7 @@ class LIBEROEval():
         """
         self._make_dir(save_path)
         self.step = steps
-        
+
         rews = []
         for task_suite in self.task_suite_list:
             for task_id in tqdm(range(len(task_suite.tasks)), desc="Evaluating..."):
@@ -482,7 +483,7 @@ class LIBEROEval():
         metrics = {f'sim_summary/{self.task_suite_name}/all': eval_rewards}
         self._log_results(metrics, self.step)
         return eval_rewards
-    
+
     def close_env(self):
         for env in self.env:
             env['env'].close()
@@ -492,8 +493,7 @@ def eval_libero(agent, result_path, num_episodes=10, seed=42,
     result_dict = {}
     for suite_name in task_suites:
         horizon = LIBERO_DATASETS_HORIZON[suite_name]
-        evaluator = LIBEROEval(task_suite_name=suite_name, eval_horizon=horizon, 
-                           num_episodes=num_episodes, seed=seed)
+        evaluator = LIBEROEval(task_suite_name=suite_name, eval_horizon=horizon, num_episodes=num_episodes, seed=seed)
         eval_rewards = evaluator.eval_episodes(agent, 0, save_path=result_path)
         result_dict[suite_name] = eval_rewards
     with open(f"{result_path}/results.json", "a+") as f:

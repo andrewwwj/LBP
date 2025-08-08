@@ -1,15 +1,17 @@
 import os
 import time
+import hashlib
 import torch
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
+from torch.optim import AdamW
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel
 import random
 import argparse
 import numpy as np
-import gc
-from torch.optim import AdamW
 from models import create_model
 from datasets import create_engine
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel
 from utils import init_ddp_env, close_ddp_env, save_checkpoint
 from utils import Logger, SmoothedValue, format_time_hms 
 from utils import RoboModelWrapper, DataLoaderWithTimeWrapper
@@ -29,7 +31,7 @@ def get_args_parser():
     
     # Base Setting (shared or essential)
     parser.add_argument('--seed', default=42, type=int)
-    parser.add_argument('--logger_type', default='tensorboard')
+    parser.add_argument('--logger_type', default='wandb', help='select wandb or tensorboard')
     parser.add_argument('--output_dir', default='runnings/')
     parser.add_argument('--gpus', default='0,1', help='List of available gpus')
     parser.add_argument('--chunk_length', default=6, type=int) # shared by engine and model
@@ -46,7 +48,8 @@ def get_args_parser():
     parser.add_argument('--warm_steps', default=2000, type=int)
     parser.add_argument('--log_interval', default=50, type=int, help='(default: 50 iter)')
     parser.add_argument('--resume_ckpt', default="", help='resume from checkpoint')
-    parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--compile', action='store_true')
+    parser.add_argument('--compile_cache_dir', type=str, default='./compile_cache')
 
     # Model Setting
     parser.add_argument('--model_name', default="bc_policy_res18_libero", type=str)
@@ -69,14 +72,21 @@ def get_args_parser():
     cfg = parser.parse_args()
     return cfg
 
-def prepare_training_components(config):
+def prepare_training_components(config, logger):
     # build model and engine
-    model = create_model(**config)
-    model = torch.compile(model) if not config['debug'] else model
-    model = RoboModelWrapper(model)
     train_loader, agent = create_engine(**config)
     train_loader = DataLoaderWithTimeWrapper(train_loader, total_iters=config['num_iters'])
-    
+    dummy_batch, _ = next(iter(train_loader))
+
+    model = create_model(**config)
+    # Setup compile cache directory for local caching
+
+    if config['compile']:
+        model.compile(
+            mode="max-autotune-no-cudagraphs", # Balances performance and stability, avoids CUDAGraphs for better reproducibility
+            dynamic=False,  # Assumes fixed input shapes for better cache efficiency and reproducibility
+        )
+    model = RoboModelWrapper(model)
     # build optimizer and lr_scheduler
     optimizer = AdamW(model.parameters(), lr=config['learning_rate'], weight_decay=config['weight_decay'])
     lr_scheduler = CosineAnnealingWarmUpRestarts(optimizer, T_warmup=config['warm_steps'], 
@@ -162,8 +172,10 @@ def main(config):
     seed_everything(config['seed'])
 
     # training
-    model, train_loader, optimizer, lr_scheduler = prepare_training_components(config)
+    model, train_loader, optimizer, lr_scheduler = prepare_training_components(config, logger)
     train(config, logger, model, train_loader, optimizer, lr_scheduler)
+    if config['compile']:
+        torch._dynamo.reset()
     logger.finish()
     if config['use_ddp']:
         close_ddp_env()

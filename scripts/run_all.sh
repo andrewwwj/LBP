@@ -1,24 +1,25 @@
 #!/bin/bash
-#export WANDB_START_METHOD=thread
+export MUJOCO_GL="egl"
 
 RUN_PLANNER=1
 RUN_POLICY=1
 
 # --- Common Configuration ---
 TASK_NAME="libero_10"
-BASE_DIR="runnings/${TASK_NAME}/exp"
+BASE_DIR="logs/${TASK_NAME}/exp"
 TEMP_DIR=$BASE_DIR
 COUNTER=1
 while [ -d "$BASE_DIR" ]; do
     BASE_DIR="${TEMP_DIR}${COUNTER}"
     COUNTER=$((COUNTER + 1))
 done
-DATASET_DIR="/home/andrew/pyprojects/datasets/Libero/256x256/processed"
-SEED=42 #3407
+DATASET_DIR="/home/andrew/pyprojects/datasets/${TASK_NAME}"
+
+SEED=42
 NUM_WORKERS=8
 PIN_MEMORY=True
 NUM_PROCS=1
-AVAILABLE_GPUS="0" # "0,1"
+AVAILABLE_GPUS="0"
 BS_TOTAL=64
 BS_PER_PROC=$((BS_TOTAL / NUM_PROCS))
 SAVE_INTERVAL=10000
@@ -30,94 +31,113 @@ WARM_STEPS=2000
 IMG_SIZE=224
 ENGINE_NAME="build_libero_engine"
 
-# --- Planner-Specific Configuration --- #
+# --- Planner-Specific Configuration ---
 PLANNER_ITER_TOTAL=6400000
+PLANNER_ITER=$((PLANNER_ITER_TOTAL / BS_TOTAL))
 PLANNER_MODEL_NAME="mid_planner_dnce_noise"
 PLANNER_RECURSIVE_STEP=4
 PLANNER_REC_PLAN_COEF=0.5
 PLANNER_EXP_DIR="${BASE_DIR}/$(date +"%m-%d")_${PLANNER_MODEL_NAME}_bs${BS_PER_PROC}_seed${SEED}"
-#PLANNER_EXP_DIR="runnings/0731_libero_10_mid_planner_dnce_noise_bs64_seed3407"  # if choose certain checkpoint
+#PLANNER_EXP_DIR="/mnt/nas3/andrew/projects/LBP/runnings/libero_10/exp47/08-06_mid_planner_dnce_noise_bs64_seed42"
 PLANNER_CKPT="Model_ckpt_100000.pth"
 
-# --- Policy-Specific Configuration --- #
+# --- Policy-Specific Configuration ---
 POLICY_ITER_TOTAL=6400000
+POLICY_ITER=$((POLICY_ITER_TOTAL / BS_TOTAL))
 POLICY_MODEL_NAME="lbp_policy_ddpm_res34_libero"
 POLICY_RECURSIVE_STEP=2
-POLICY_CHUNK_LENGTH=6
-POLICY_USE_AC=True
+CHUNK_LENGTH=6
+USE_AC=True
 POLICY_EXP_DIR="${BASE_DIR}/$(date +"%m-%d")_${POLICY_MODEL_NAME}_hor${POLICY_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
 
-# --- Execution --- #
+# --- Execution ---
+# 1) Train planner
 if [ $RUN_PLANNER = 1 ]; then
+  echo
   echo "======================================================"
   echo "Running planner script..."
   echo "Planner Checkpoint: ${PLANNER_EXP_DIR}"
   echo "======================================================"
-  bash scripts/planner_libero.sh \
-      "${PLANNER_EXP_DIR}" \
-      "${SEED}" \
-      "${NUM_PROCS}" \
-      "${BS_PER_PROC}" \
-      "${PLANNER_ITER_TOTAL}" \
-      "${SAVE_INTERVAL}" \
-      "${PLANNER_MODEL_NAME}" \
-      "${ENGINE_NAME}" \
-      "${IMG_SIZE}" \
-      "${LEARNING_RATE}" \
-      "${WEIGHT_DECAY}" \
-      "${ETA_MIN_LR}" \
-      "${LOG_INTERVAL}" \
-      "${WARM_STEPS}" \
-      "${PLANNER_RECURSIVE_STEP}" \
-      "${PLANNER_REC_PLAN_COEF}" \
-      "${DATASET_DIR}" \
-      "${TASK_NAME}" \
-      "${NUM_WORKERS}" \
-      "${PIN_MEMORY}" \
-      "${AVAILABLE_GPUS}"
+#  PORT=26501
+#  torchrun \
+#      --nproc_per_node=${NUM_PROCS} \
+#      --nnodes=1 \
+#      --node_rank=0 \
+#      --master_addr="127.0.0.1" \
+#      --master_port=${PORT} \
+  python train_policy_sim.py \
+        --compile \
+        --seed $SEED \
+        --output_dir "$PLANNER_EXP_DIR" \
+        --gpus $AVAILABLE_GPUS \
+        --num_iters $PLANNER_ITER \
+        --model_name $PLANNER_MODEL_NAME \
+        --engine_name $ENGINE_NAME \
+        --dataset_path $DATASET_DIR \
+        --img_size $IMG_SIZE \
+        --batch_size $BS_PER_PROC \
+        --pin_mem $PIN_MEMORY \
+        --num_workers $NUM_WORKERS \
+        --learning_rate $LEARNING_RATE \
+        --weight_decay $WEIGHT_DECAY \
+        --eta_min_lr $ETA_MIN_LR \
+        --save_interval $SAVE_INTERVAL \
+        --warm_steps $WARM_STEPS \
+        --log_interval $LOG_INTERVAL \
+        --recursive_step $PLANNER_RECURSIVE_STEP \
+        --rec_plan_coef $PLANNER_REC_PLAN_COEF
 
   if [ $? -ne 0 ]; then
       echo "Planner script failed. Aborting."
       exit 1
   fi
+  echo "Planner script finished. Results saved to $LOG_DIR"
 fi
 
+# 2) Train Policy
 if [ $RUN_POLICY = 1 ]; then
+  echo
   echo "======================================================"
   echo "Running policy script..."
   echo "Planner Checkpoint: ${PLANNER_EXP_DIR}/${PLANNER_CKPT}"
   echo "Policy Checkpoint: ${POLICY_EXP_DIR}"
   echo "======================================================"
-  bash scripts/lbp_ddpm-libero_10.sh \
-      "${PLANNER_EXP_DIR}" \
-      "${PLANNER_CKPT}" \
-      "${SEED}" \
-      "${NUM_PROCS}" \
-      "${BS_PER_PROC}" \
-      "${POLICY_ITER_TOTAL}" \
-      "${SAVE_INTERVAL}" \
-      "${POLICY_CHUNK_LENGTH}" \
-      "${POLICY_MODEL_NAME}" \
-      "${ENGINE_NAME}" \
-      "${IMG_SIZE}" \
-      "${POLICY_USE_AC}" \
-      "${LEARNING_RATE}" \
-      "${WEIGHT_DECAY}" \
-      "${ETA_MIN_LR}" \
-      "${LOG_INTERVAL}" \
-      "${WARM_STEPS}" \
-      "${POLICY_RECURSIVE_STEP}" \
-      "${DATASET_DIR}" \
-      "${TASK_NAME}" \
-      "${NUM_WORKERS}" \
-      "${PIN_MEMORY}" \
-      "${POLICY_EXP_DIR}" \
-      "${AVAILABLE_GPUS}"
+#  PORT=26501
+#  torchrun \
+#      --nproc_per_node=${NUM_PROCS} \
+#      --nnodes=1 \
+#      --node_rank=0 \
+#      --master_addr="127.0.0.1" \
+#      --master_port=${PORT} \
+  python train_policy_sim.py \
+        --compile \
+        --seed $SEED \
+        --output_dir "$POLICY_EXP_DIR" \
+        --gpus $AVAILABLE_GPUS \
+        --num_iters $POLICY_ITER \
+        --chunk_length $CHUNK_LENGTH \
+        --model_name $POLICY_MODEL_NAME \
+        --engine_name $ENGINE_NAME \
+        --dataset_path $DATASET_DIR \
+        --img_size $IMG_SIZE \
+        --batch_size $BS_PER_PROC \
+        --pin_mem $PIN_MEMORY \
+        --num_workers $NUM_WORKERS \
+        --use_ac $USE_AC \
+        --learning_rate $LEARNING_RATE \
+        --weight_decay $WEIGHT_DECAY \
+        --eta_min_lr $ETA_MIN_LR \
+        --save_interval $SAVE_INTERVAL \
+        --warm_steps $WARM_STEPS \
+        --log_interval $LOG_INTERVAL \
+        --recursive_step $POLICY_RECURSIVE_STEP \
+        --imaginator_ckpt_path "$PLANNER_EXP_DIR"/$PLANNER_CKPT
 
   if [ $? -ne 0 ]; then
       echo "Policy script failed."
       exit 1
   fi
+  echo "Policy script finished. Results saved to $LOG_DIR"
 fi
 
 echo "======================================================"
