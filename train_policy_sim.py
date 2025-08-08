@@ -72,11 +72,10 @@ def get_args_parser():
     cfg = parser.parse_args()
     return cfg
 
-def prepare_training_components(config, logger):
+def prepare_training_components(config):
     # build model and engine
     train_loader, agent = create_engine(**config)
     train_loader = DataLoaderWithTimeWrapper(train_loader, total_iters=config['num_iters'])
-    dummy_batch, _ = next(iter(train_loader))
 
     model = create_model(**config)
     # Setup compile cache directory for local caching
@@ -172,7 +171,7 @@ def main(config):
     seed_everything(config['seed'])
 
     # training
-    model, train_loader, optimizer, lr_scheduler = prepare_training_components(config, logger)
+    model, train_loader, optimizer, lr_scheduler = prepare_training_components(config)
     train(config, logger, model, train_loader, optimizer, lr_scheduler)
     if config['compile']:
         torch._dynamo.reset()

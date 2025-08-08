@@ -142,7 +142,8 @@ class MidImaginator(nn.Module):
         loss_dict[f"loss_latent_zg"] = self.loss_func(pred_subgoal, sub_goals[:, 0, ...])
 
         # Recursive sub-goal prediction
-        random_number = random.random()
+        # random_number = random.random()
+        random_number = torch.rand(1, device=sub_goals.device) < 0.5
         if random_number < 0.5:
             for i in range(1, self.recursive_step):
                 # latent planners
