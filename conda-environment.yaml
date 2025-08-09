@@ -1,4 +1,4 @@
-name: lbp-test
+name: lbp
 channels:
   - pytorch
   - nvidia
@@ -260,4 +260,4 @@ dependencies:
       - werkzeug==3.0.6
       - yapf==0.43.0
       - zipp==3.20.2
-prefix: /home/andrew/anaconda3/envs/lbp-test
+prefix: /home/andrew/anaconda3/envs/lbp
