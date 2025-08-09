@@ -147,10 +147,10 @@ class MidImaginator(nn.Module):
 
         # Recursive sub-goal prediction
         # random_number = random.random()
-        random_number = torch.rand(1, device=sub_goals.device)
+        randomness = torch.rand(1, device=sub_goals.device) < 0.5
         for i in range(1, self.recursive_step):
             target_subgoal = sub_goals[:, i, ...]
-            if random_number < 0.5:
+            if randomness:
                 # latent planners
                 last_subgoal = pred_subgoal
                 pred_subgoal = self.latent_planner(s0, last_subgoal, sg)
