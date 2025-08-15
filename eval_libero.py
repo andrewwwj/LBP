@@ -34,7 +34,7 @@ def main():
         ckpt_file = os.path.join(ckpt_path, file)
         state_dict = torch.load(ckpt_file, map_location='cpu')
         model.load_state_dict(state_dict, strict=True)
-        model.compile(mode="max-autotune-no-cudagraphs", dynamic=False)
+        model.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if args.compile else model
         model = RoboModelWrapper(model)
         _, agent = create_engine(**config)
 
@@ -48,6 +48,7 @@ def main():
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Evaluate a trained model checkpoint.')
     parser.add_argument('--gpu', type=int, default=0, help='GPU device ID to use.')
+    parser.add_argument('--compile', action='store_true')
     parser.add_argument('--ckpt_path', type=str, required=True,
                         help='Path to the checkpoint directory containing model and config.')
     parser.add_argument('--task_name', nargs='+', default=['libero_10'], help='List of task suites to evaluate on.')

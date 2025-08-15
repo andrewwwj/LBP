@@ -54,6 +54,7 @@ def get_args_parser():
     # Model Setting
     parser.add_argument('--model_name', default="bc_policy_res18_libero", type=str)
     parser.add_argument('--imaginator_ckpt_path', type=str)
+    parser.add_argument('--fusion_mode', type=str, help='Residual GatedRes FiLM CrossAttn Perceiver')
 
     # Engine Setting
     parser.add_argument('--engine_name', default="build_libero_engine", type=str)
@@ -78,7 +79,6 @@ def prepare_training_components(config):
     train_loader = DataLoaderWithTimeWrapper(train_loader, total_iters=config['num_iters'])
 
     model = create_model(**config)
-    # Setup compile cache directory for local caching
 
     if config['compile']:
         model.compile(

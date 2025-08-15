@@ -5,7 +5,7 @@ RUN_PLANNER=1
 RUN_POLICY=1
 
 # --- Common Configuration ---
-TASK_NAME="libero_10"
+TASK_NAME="libero_object"
 BASE_DIR="logs/${TASK_NAME}/exp"
 TEMP_DIR=$BASE_DIR
 COUNTER=1
@@ -13,6 +13,8 @@ while [ -d "$BASE_DIR" ]; do
     BASE_DIR="${TEMP_DIR}${COUNTER}"
     COUNTER=$((COUNTER + 1))
 done
+touch "$BASE_DIR/train_info.txt"
+
 DATASET_DIR="/home/andrew/pyprojects/datasets/${TASK_NAME}"
 
 SEED=42
@@ -37,8 +39,8 @@ PLANNER_ITER=$((PLANNER_ITER_TOTAL / BS_TOTAL))
 PLANNER_MODEL_NAME="mid_planner_dnce_noise"
 PLANNER_RECURSIVE_STEP=4
 PLANNER_REC_PLAN_COEF=0.5
-PLANNER_EXP_DIR="${BASE_DIR}/$(date +"%m-%d")_${PLANNER_MODEL_NAME}_bs${BS_PER_PROC}_seed${SEED}"
-#PLANNER_EXP_DIR="/mnt/nas3/andrew/projects/LBP/runnings/libero_10/exp47/08-06_mid_planner_dnce_noise_bs64_seed42"
+PLANNER_EXP_DIR="${BASE_DIR}/$(date +"%m-%d")_${PLANNER_MODEL_NAME}_hor${PLANNER_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
+#PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/exp24/08-09_mid_planner_dnce_noise_bs64_seed42"
 PLANNER_CKPT="Model_ckpt_100000.pth"
 
 # --- Policy-Specific Configuration ---
@@ -49,7 +51,7 @@ POLICY_RECURSIVE_STEP=2
 CHUNK_LENGTH=6
 USE_AC=True
 POLICY_EXP_DIR="${BASE_DIR}/$(date +"%m-%d")_${POLICY_MODEL_NAME}_hor${POLICY_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
-
+#POLICY_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/exp24/08-09_lbp_policy_ddpm_res34_libero_hor2_bs64_seed42"
 # --- Execution ---
 # 1) Train planner
 if [ $RUN_PLANNER = 1 ]; then
@@ -131,13 +133,12 @@ if [ $RUN_POLICY = 1 ]; then
         --warm_steps $WARM_STEPS \
         --log_interval $LOG_INTERVAL \
         --recursive_step $POLICY_RECURSIVE_STEP \
-        --imaginator_ckpt_path "$PLANNER_EXP_DIR"/$PLANNER_CKPT
-
+        --imaginator_ckpt_path "$PLANNER_EXP_DIR/$PLANNER_CKPT"
   if [ $? -ne 0 ]; then
       echo "Policy script failed."
       exit 1
   fi
-  echo "Policy script finished. Results saved to $LOG_DIR"
+  echo "Policy script finished. Results saved to $BASE_DIR"
 fi
 
 echo "======================================================"
