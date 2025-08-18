@@ -61,7 +61,8 @@ class LBPPolicy(nn.Module):
                                 hidden_dim=policy_hidden_dim, action_size=action_size * chunk_length)
         elif decoder_head == 'ddpm':
             self.head = DDPMHead(num_blocks=policy_num_blocks, input_dim=self.vision_dim + self.proprio_dim + self.latent_dim,
-                                hidden_dim=policy_hidden_dim, action_size=action_size * chunk_length)
+                                 hidden_dim=policy_hidden_dim, action_size=action_size * chunk_length,
+                                 guidance_mode=kwargs['guidance_mode'])
         else :
             raise NotImplementedError
 
@@ -90,8 +91,9 @@ class LBPPolicy(nn.Module):
             loss = self.loss_func(pred_actions, cur_actions)
             return loss
         elif self.decoder_head == 'ddpm':
-            noise, t_tensor, noise_action, noise_pred = self.head(all_obs, cur_actions)
-            loss = (((noise_pred - noise) ** 2).sum(axis = -1)).mean()
+            # noise, t_tensor, noise_action, noise_pred = self.head(all_obs, cur_actions)
+            # loss = (((noise_pred - noise) ** 2).sum(axis = -1)).mean()
+            loss = self.head(all_obs, cur_actions)
             return loss
 
     def generate_head(self, all_obs):

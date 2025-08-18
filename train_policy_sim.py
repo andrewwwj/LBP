@@ -54,7 +54,7 @@ def get_args_parser():
     # Model Setting
     parser.add_argument('--model_name', default="bc_policy_res18_libero", type=str)
     parser.add_argument('--imaginator_ckpt_path', type=str)
-    parser.add_argument('--fusion_mode', type=str, help='Residual GatedRes FiLM CrossAttn Perceiver')
+    parser.add_argument('--guidance_mode', type=str, default="cg", help='cg cfg energy')
 
     # Engine Setting
     parser.add_argument('--engine_name', default="build_libero_engine", type=str)

@@ -49,82 +49,6 @@ class TriplePathPredictor(nn.Module):
         return pred
 
 
-class TriPathResPredictor(nn.Module):
-    def __init__(self,
-                 mode='residual',
-                 latent_dim=1024,
-                 output_dim=1024):
-        super().__init__()
-        self.mode = mode
-        if self.mode == 'Residual':
-            self.mlp = Mlp(in_features=latent_dim * 3,
-                           hidden_features=latent_dim * 4,
-                           out_features=output_dim,
-                           norm_layer=nn.LayerNorm)
-        elif self.mode == 'FiLM':
-            self.mlp = Mlp(in_features=latent_dim * 3,
-                           hidden_features=latent_dim * 4,
-                           out_features=output_dim * 2,
-                           norm_layer=nn.LayerNorm)
-        elif self.mode == 'GatedRes':
-            self.mlp = Mlp(in_features=latent_dim * 3,
-                           hidden_features=latent_dim * 4,
-                           out_features=output_dim + 1,
-                           norm_layer=nn.LayerNorm)
-        elif self.mode == 'CrossAttn':
-            num_heads = 8
-            self.attention = nn.MultiheadAttention(embed_dim=latent_dim, num_heads=num_heads, batch_first=True)
-            self.norm1 = nn.LayerNorm(latent_dim)
-            self.norm2 = nn.LayerNorm(latent_dim)
-            self.ffn = Mlp(in_features=latent_dim, hidden_features=latent_dim * 4, out_features=output_dim)
-        elif self.mode == 'Perceiver':
-            num_heads = 8
-            self.cross_attention = nn.MultiheadAttention(embed_dim=latent_dim, num_heads=num_heads, batch_first=True)
-            self.norm1 = nn.LayerNorm(latent_dim)
-            self.self_attention_blocks = nn.Sequential(
-                Block(dim=latent_dim, num_heads=num_heads, mlp_ratio=4., qkv_bias=True, norm_layer=nn.LayerNorm),
-                Block(dim=latent_dim, num_heads=num_heads, mlp_ratio=4., qkv_bias=True, norm_layer=nn.LayerNorm),
-            )
-            self.ffn = Mlp(in_features=latent_dim, hidden_features=latent_dim * 4, out_features=output_dim)
-
-        self.apply(init_weight)
-
-    def forward(self, s0, s1, s2):
-        s = torch.cat([s0, s1, s2], dim=-1)
-        if self.mode =='Residual':
-            pred = s1 + self.mlp(s)
-            return pred
-        elif self.mode == 'FiLM':
-            gamma_beta = self.mlp(s)
-            gamma, beta = torch.chunk(gamma_beta, 2, dim=-1)
-            pred = gamma * s1 + beta
-            return pred
-        elif self.mode == 'GatedRes':
-            x = self.mlp(s)
-            residual, gate = torch.split(x, [s1.size(-1), 1], dim=-1)
-            gate = torch.sigmoid(gate)
-            pred = (1 - gate) * s1 + gate * residual
-            return pred
-        elif self.mode == 'CrossAttn':
-            query = s1.unsqueeze(1)
-            kv = torch.stack([s0, s2], dim=1)
-            attn_output, _ = self.attention(query, kv, kv)
-            s1 = self.norm1(s1 + attn_output.squeeze(1))
-            ffn_output = self.ffn(s1)
-            pred = self.norm2(s1 + ffn_output)
-            return pred
-        elif self.mode == 'Perceiver':
-            query = s1.unsqueeze(1)
-            kv = torch.stack([s0, s2], dim=1)
-            attn_output, _ = self.cross_attention(query, kv, kv)
-            x = self.norm1(s1 + attn_output.squeeze(1))
-            x = x.unsqueeze(1)  # Add sequence dimension
-            x = self.self_attention_blocks(x)
-            x = x.squeeze(1)  # Remove sequence dimension
-            pred = self.ffn(x)
-            return pred
-
-
 class DnceLatentProj(nn.Module):
     def __init__(self, latent_info_file='assets/libero.pkl'):
         super().__init__()
@@ -174,7 +98,6 @@ class MidImaginator(nn.Module):
         self.latent_proj = DnceLatentProj(latent_info_file=latent_info_file)
         self.goal_rec = DualPathPredictor(latent_dim=self.latent_dim, output_dim=self.latent_dim)
         self.latent_planner = TriplePathPredictor(latent_dim=latent_dim, output_dim=self.latent_dim)
-        # self.latent_planner = TriPathResPredictor(mode=kwargs['fusion_mode'], latent_dim=latent_dim, output_dim=self.latent_dim)
 
     def forward(self, cur_images, instruction, sub_goals, **kwargs):
         sg = self.latent_proj.lang_proj(instruction)
@@ -202,10 +125,6 @@ class MidImaginator(nn.Module):
             else:
                 # latent planners
                 last_subgoal = sub_goals[:, i - 1, ...]
-                # if i == 1:
-                #     last_subgoal = pred_subgoal
-                # else:
-                #     last_subgoal = sub_goals[:, i - 1, ...]
                 if self.state_random_noise:
                     random_noise = torch.randn_like(last_subgoal) * self.state_noise_strength
                     last_subgoal = last_subgoal + random_noise
@@ -223,7 +142,6 @@ class MidImaginator(nn.Module):
         for i in range(1, recursive_step):
             last_subgoal = planned_subgoals[-1]
             pred_goal = self.latent_planner(s0, last_subgoal, sg)
-            # pred_goal = last_subgoal + residual
             planned_subgoals.append(pred_goal)
         planned_subgoals = torch.cat([x.unsqueeze(1) for x in planned_subgoals], dim=1)
         return planned_subgoals, dict(planned_subgoals=planned_subgoals, img_latent=s0, lang_latent=sg)

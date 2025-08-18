@@ -29,7 +29,7 @@ def main():
             continue
         with open(json_file, 'r') as f:
             config = json.load(f)
-
+        config['dataset_path'] = args.dataset_path if args.dataset_path else config['dataset_path']
         model = create_model(**config)
         ckpt_file = os.path.join(ckpt_path, file)
         state_dict = torch.load(ckpt_file, map_location='cpu')
@@ -49,8 +49,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Evaluate a trained model checkpoint.')
     parser.add_argument('--gpu', type=int, default=0, help='GPU device ID to use.')
     parser.add_argument('--compile', action='store_true')
-    parser.add_argument('--ckpt_path', type=str, required=True,
-                        help='Path to the checkpoint directory containing model and config.')
-    parser.add_argument('--task_name', nargs='+', default=['libero_10'], help='List of task suites to evaluate on.')
+    parser.add_argument('--dataset_path', type=str)
+    parser.add_argument('--ckpt_path', type=str, required=True, help='Path to the checkpoint directory containing model and config.')
+    parser.add_argument('--task_name', nargs='+', help='List of task suites to evaluate on.')
     args = parser.parse_args()
     main()

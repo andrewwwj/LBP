@@ -5,7 +5,7 @@ RUN_PLANNER=1
 RUN_POLICY=1
 
 # --- Common Configuration ---
-TASK_NAME="libero_object"
+TASK_NAME="libero_10"
 BASE_DIR="logs/${TASK_NAME}/exp"
 TEMP_DIR=$BASE_DIR
 COUNTER=1
@@ -13,11 +13,12 @@ while [ -d "$BASE_DIR" ]; do
     BASE_DIR="${TEMP_DIR}${COUNTER}"
     COUNTER=$((COUNTER + 1))
 done
+mkdir -p $BASE_DIR
 touch "$BASE_DIR/train_info.txt"
 
 DATASET_DIR="/home/andrew/pyprojects/datasets/${TASK_NAME}"
 
-SEED=42
+SEED=3407
 NUM_WORKERS=8
 PIN_MEMORY=True
 NUM_PROCS=1
@@ -40,7 +41,7 @@ PLANNER_MODEL_NAME="mid_planner_dnce_noise"
 PLANNER_RECURSIVE_STEP=4
 PLANNER_REC_PLAN_COEF=0.5
 PLANNER_EXP_DIR="${BASE_DIR}/$(date +"%m-%d")_${PLANNER_MODEL_NAME}_hor${PLANNER_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
-#PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/exp24/08-09_mid_planner_dnce_noise_bs64_seed42"
+#PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/baseline/08-11_mid_planner_dnce_noise_bs64_seed3407"
 PLANNER_CKPT="Model_ckpt_100000.pth"
 
 # --- Policy-Specific Configuration ---

@@ -7,6 +7,7 @@ import h5py
 # from PIL import Image
 import cv2
 import random
+from PIL import Image, ImageDraw, ImageFont
 import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader, DistributedSampler
@@ -418,7 +419,7 @@ class LIBEROEval():
 
     def _rollout(self, task_suite, policy, task_id: int=0):
         """
-        rollout one episode and return the episode return
+        rollout N episodes in parallel, where N = self.num_episodes
         """
 
         if self.use_ac:
@@ -453,8 +454,29 @@ class LIBEROEval():
             obs, reward, done, info = env['env'].step(action)
             if done.all():
                 break
+
+        grid_size = int(np.ceil(np.sqrt(self.num_episodes)))
+        grid_images = []
+
+        statuses = ["O" if d else "X" for d in done]
+        for frame_idx in range(len(images)):
+            frame = images[frame_idx]  # Shape: (B*H, W, C)
+            B, H, W, C = self.num_episodes, frame.shape[0] // self.num_episodes, frame.shape[1], frame.shape[2]
+            episode_frames = frame.reshape(B, H, W, C)
+            num_rows = int(np.ceil(B / grid_size))
+            grid_frame = np.zeros((num_rows * H, grid_size * W, C), dtype=episode_frames.dtype)
+            for i in range(B):
+                row = i // grid_size
+                col = i % grid_size
+                episode_frame = episode_frames[i].copy()
+                status = done[i]
+                color = (0, 255, 0) if status else (255, 0, 0)  # Green for success, Red for fail
+                cv2.putText(episode_frame, statuses[i], (10, 30), cv2.FONT_HERSHEY_TRIPLEX, 1, color, 2, cv2.LINE_AA)
+                grid_frame[row * H:(row + 1) * H, col * W:(col + 1) * W] = episode_frame
+            grid_images.append(grid_frame)
+
         save_path = f'{self.base_dir}/{lang}.mp4'
-        self._save_video(save_path, images, done, fps=30)
+        self._save_video(save_path, grid_images, done, fps=10)
 
         num_success = 0
         for k in range(self.num_episodes):
@@ -479,7 +501,7 @@ class LIBEROEval():
         for task_suite in self.task_suite_list:
             for task_id in tqdm(range(len(task_suite.tasks)), desc="Evaluating..."):
                 rews.append(self._rollout(task_suite, policy, task_id))
-        eval_rewards = sum(rews) / len(rews)
+        eval_rewards = round(sum(rews) / len(rews), 2)
         metrics = {f'sim_summary/{self.task_suite_name}/all': eval_rewards}
         self._log_results(metrics, self.step)
         return eval_rewards
