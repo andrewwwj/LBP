@@ -393,9 +393,12 @@ class LIBEROEval():
             # just print out and save the results and pass
             print(metrics)
             save_name = os.path.join(self.base_dir, 'results.json')
-            with open(save_name, 'a+') as f:
-                line = json.dumps(metrics)
-                f.write(line+'\n')
+            for log in metrics.keys():
+                with open(save_name, 'a+') as f:
+                    line = json.dumps(metrics)
+                    if log.startswith('summary'):
+                        line = line +'\n'
+                    f.write(line+'\n')
         else:
             # log the results to the logger
             self.logger.log_metrics(metrics, steps)
@@ -482,7 +485,7 @@ class LIBEROEval():
         for k in range(self.num_episodes):
             num_success += int(done[k])
         avg_succ_rate = num_success / self.num_episodes
-        metrics = {f'sim/{self.task_suite_name}/{lang}': avg_succ_rate}
+        metrics = {f'{self.task_suite_name}/{lang}': avg_succ_rate}
         self._log_results(metrics, self.step)
         env['env'].close()
         return avg_succ_rate
@@ -502,7 +505,7 @@ class LIBEROEval():
             for task_id in tqdm(range(len(task_suite.tasks)), desc="Evaluating..."):
                 rews.append(self._rollout(task_suite, policy, task_id))
         eval_rewards = round(sum(rews) / len(rews), 2)
-        metrics = {f'sim_summary/{self.task_suite_name}/all': eval_rewards}
+        metrics = {f'summary/{self.task_suite_name}/all': eval_rewards}
         self._log_results(metrics, self.step)
         return eval_rewards
 
