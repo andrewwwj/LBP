@@ -81,6 +81,7 @@ class DDPMHead(nn.Module):
                 param.requires_grad = False
 
             # CEP hyperparameters
+            self.critic_loss_weight = 1.0
             self.alpha = 3.0  # Temperature parameter for softmax
             self.guidance_scale = 1.0  # Guidance strength
             self.num_samples = 16  # Number of samples for CEP loss
