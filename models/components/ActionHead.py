@@ -211,15 +211,17 @@ class DDPMHead(nn.Module):
         """
         if not hasattr(self, 'qt_network'):
             return torch.zeros_like(actions)
-
         with torch.enable_grad():
             actions = actions.detach().requires_grad_(True)
+            # Encode time
+            t_emb = self.time_process(t.reshape(-1, 1).to(torch.float32) / self.num_timesteps)
+            t_emb = self.time_encoder(t_emb)
+            # Prepare input for Q_t network with vision+language conditioning
             # Get Q-values
-            q_values = self.qt_network(torch.cat([condition, actions], dim=-1))
+            q_values = self.qt_network(torch.cat([condition, actions, t_emb], dim=-1))
             # Compute gradient
             guidance_scale = 1.0
             guidance = guidance_scale * torch.autograd.grad(torch.sum(q_values), actions, create_graph=False)[0]
-
         return guidance.detach()
 
     def compute_energy_loss(self, energy_obs, cur_action, noise_action, t_tensor, noise_pred):
