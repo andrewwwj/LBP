@@ -12,9 +12,9 @@ base_dir = "/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/baseline/08-
 result_dir = os.path.join(base_dir, "results.json")
 use_parsing = False
 parsing_key = "// w_cfg = 2.0"
-start_parsing = False
-count = 0
 with open(result_dir, 'r') as f:
+    start_parsing = False
+    count = 0
     for line in f:
         line = line.strip()
         if not line:
@@ -28,16 +28,15 @@ with open(result_dir, 'r') as f:
             try:
                 data = json.loads(line)
                 for key, value in data.items():
-                    if key.startswith("sim_summary"):
+                    if key.startswith("summary"):
                         summary_data[key].append(value)
-                    elif key.startswith("sim/"):
+                    elif key.startswith("libero"):
                         task_data[key].append(value)
             except json.JSONDecodeError:
                 continue
-print(count)
-# 3. Calculate statistics
+            count += 1
+# print(count)
 task_stats = {}
-# Sort keys to ensure consistent task order
 sorted_task_keys = task_data.keys()
 
 # Create task labels
@@ -59,20 +58,15 @@ else:
     summary_mean = 0.0
     summary_var = 0.0
 
-# 4. Print results
-print("### Statistical Results ###")
 print("\n**Overall Success Rate:**")
 print(f"Mean: {summary_mean:.2f}")
 print(f"Var: {summary_var:.4f}")
-print("**Per-Task Success Rate:**")
+print("\n**Per-Task Success Rate:**")
 print("\n| Task  | Mean |  Var   |")
-# Sort tasks by mean success rate for the table
 table_data = task_stats.items()
-# table_data = sorted(task_stats.items(), key=lambda item: item[1]['mean'], reverse=True)
 for key, stats in table_data:
     print(f"| {task_labels[key]} | {stats['mean']:.2f} | {stats['var']:.4f} |")
 
-# 5. Generate graph
 if task_stats:
     # Prepare data for plotting, sorted by mean success rate
     plot_data = []
@@ -81,16 +75,10 @@ if task_stats:
         std_dev = np.sqrt(stats['var'])
         plot_data.append((task_labels[key], stats['mean'], std_dev))
 
-    # Sort by mean value in descending order
-    # plot_data.sort(key=lambda x: x[1], reverse=True)
-
-    # Unpack sorted data
     sorted_labels = [item[0] for item in plot_data]
     sorted_means = [item[1] for item in plot_data]
     sorted_std_devs = [item[2] for item in plot_data]
 
-    # Create the plot
-    # plt.style.use('seaborn-v0_8-whitegrid')
     fig, ax = plt.subplots(figsize=(14, 8))
 
     bars = ax.bar(sorted_labels, sorted_means, yerr=sorted_std_devs,
@@ -103,16 +91,13 @@ if task_stats:
     ax.tick_params(axis='x', rotation=45, labelsize=10)
     ax.tick_params(axis='y', labelsize=10)
 
-    # Add mean value text on top of each bar
     for bar in bars:
         yval = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width() / 2.0, yval + 0.05, f'{yval:.2f}',
-                ha='center', va='bottom', fontsize=10)
+        ax.text(bar.get_x() + bar.get_width() / 2.0, yval + 0.05, f'{yval:.2f}', ha='center', va='bottom', fontsize=10)
 
     plt.tight_layout()
     plt.savefig("task_success_rates.png")
-
-    print("Generated Graph")
+    print("Saved a graph to task_success_rates.png")
 else:
     print("\n---")
     print("No task data found to generate graph")

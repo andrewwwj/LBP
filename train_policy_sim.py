@@ -15,7 +15,7 @@ from datasets import create_engine
 from utils import init_ddp_env, close_ddp_env, save_checkpoint
 from utils import Logger, SmoothedValue, format_time_hms 
 from utils import RoboModelWrapper, DataLoaderWithTimeWrapper
-from utils import CosineAnnealingWarmUpRestarts, check_dict_structure
+from utils import CosineAnnealingWarmUpRestarts
 
 def seed_everything(seed):
     random.seed(seed)
@@ -55,6 +55,7 @@ def get_args_parser():
     parser.add_argument('--model_name', default="bc_policy_res18_libero", type=str)
     parser.add_argument('--imaginator_ckpt_path', type=str)
     parser.add_argument('--guidance_mode', type=lambda x: x.lower(), help='cg cfg energy')
+    parser.add_argument('--use_separate_condition', type=bool, default=False)
 
     # Engine Setting
     parser.add_argument('--engine_name', default="build_libero_engine", type=str)
