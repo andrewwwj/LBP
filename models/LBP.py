@@ -53,7 +53,8 @@ class LBPPolicy(nn.Module):
         # proprio encoder
         self.proprio_dim = proprio_input_dim
         # self.proprio_encoder = Mlp(proprio_input_dim, proprio_hidden_dim, proprio_hidden_dim, norm_layer=nn.LayerNorm)
-        self.use_separate_condition = kwargs.get('use_separate_condition') if kwargs.get('guidance_mode') == 'energy' else False
+        use_separate_condition = kwargs.get('use_separate_condition')
+        self.use_separate_condition = use_separate_condition if use_separate_condition is not None else False
 
         # action decoder
         self.decoder_head = decoder_head
@@ -61,37 +62,17 @@ class LBPPolicy(nn.Module):
             self.head = BaseHead(num_blocks=policy_num_blocks, input_dim=self.vision_dim + self.proprio_dim + self.latent_dim,
                                 hidden_dim=policy_hidden_dim, action_size=action_size * chunk_length)
         elif decoder_head == 'ddpm':
-            if self.use_separate_condition and kwargs.get('guidance_mode') == 'energy':
-                # When using separated conditioning, pass dimension info
-                self.head = DDPMHead(
-                    num_blocks=policy_num_blocks,
-                    input_dim=self.vision_dim + self.proprio_dim + self.latent_dim,
-                    hidden_dim=policy_hidden_dim,
-                    action_size=action_size * chunk_length,
-                    guidance_mode=kwargs['guidance_mode'],
-                    proprio_dim=self.proprio_dim,
-                    vis_lang_dim=self.vision_dim,
-                    latent_goal_dim=self.latent_dim,
-                    diffusion_input_dim=self.proprio_dim + self.latent_dim,  # Proprioceptive dimension for diffusion
-                    energy_input_dim=self.vision_dim + self.latent_dim,  # Vision+language dimension for energy
-                    use_separate_condition=True
-                )
-            else:
-                # Standard setup without separate conditioning
-                self.head = DDPMHead(
-                    num_blocks=policy_num_blocks,
-                    input_dim=self.vision_dim + self.proprio_dim + self.latent_dim,
-                    hidden_dim=policy_hidden_dim,
-                    action_size=action_size * chunk_length,
-                    guidance_mode=kwargs['guidance_mode'],
-                    proprio_dim=self.proprio_dim,
-                    vis_lang_dim=self.vision_dim,
-                    latent_goal_dim=self.latent_dim,
-                    use_separate_condition=False
-                )
-        else:
-            raise NotImplementedError
-
+            self.head = DDPMHead(
+                num_blocks=policy_num_blocks,
+                input_dim=self.vision_dim + self.proprio_dim + self.latent_dim,
+                hidden_dim=policy_hidden_dim,
+                action_size=action_size * chunk_length,
+                guidance_mode=kwargs['guidance_mode'],
+                proprio_dim=self.proprio_dim,
+                vis_lang_dim=self.vision_dim,
+                latent_goal_dim=self.latent_dim,
+                use_separate_condition=self.use_separate_condition
+            )
         # loss function
         self.loss_func = loss_func(**loss_func_conig)
 
@@ -106,37 +87,7 @@ class LBPPolicy(nn.Module):
         # vision-language semantics
         vl_semantics = self.vision_encoder(vision_obs, lang)
         vl_semantics = vl_semantics.reshape(B, -1)
-        if self.use_separate_condition and self.decoder_head == 'ddpm':
-            # TODO change this part for energy guidance
-            # proprio_obs = torch.cat([vl_semantics, proprio_obs, fused_goal], dim=-1)
-            diffusion_obs = torch.cat([proprio_obs, fused_goal], dim=-1) # TODO
-            energy_obs = torch.cat([vl_semantics, fused_goal], dim=-1)
-            return diffusion_obs, energy_obs
-        else:
-            # Standard combined observation
-            all_obs = torch.cat([vl_semantics, proprio_obs, fused_goal], dim=-1)
-            return all_obs
-    # def forward_cond(self, cur_images, instruction):
-    #     planned_subogals, details = self.imaginator.generate(cur_images, instruction, self.recursive_step)
-    #     lang_emb = details['lang_latent']
-    #     cur_query = details['img_latent']
-    #     fused_goal = self.goal_fusion(cur_query.unsqueeze(1), planned_subogals).squeeze(1)
-    #     return lang_emb, fused_goal
-    # def forward_obs(self, cur_images, cur_proprios, lang_emb, fused_goal):
-    #     B, V, C, H, W = cur_images.shape
-    #     lang = lang_emb.unsqueeze(1).repeat(1, V, 1).reshape(B*V, -1)
-    #     vision_obs = cur_images.reshape(B*V, C, H, W) # B*2 3 224 224
-    #     vl_semantics = self.vision_encoder(vision_obs, lang)  # vision-language semantics
-    #     vl_semantics = vl_semantics.reshape(B, -1)
-    #     if self.use_separate_condition and self.decoder_head == 'ddpm':
-    #         # Return separate conditioning for diffusion and energy models
-    #         proprio_obs = cur_proprios  # Proprioceptive for diffusion
-    #         vision_lang_obs = torch.cat([vl_semantics, fused_goal], dim=-1)  # Vision+language for energy
-    #         return proprio_obs, vision_lang_obs
-    #     else:
-    #         # Standard combined observation
-    #         all_obs = torch.cat([vl_semantics, cur_proprios, fused_goal], dim=-1)
-    #         return all_obs
+        return vl_semantics, proprio_obs, fused_goal
 
     def forward_head(self, all_obs, cur_actions):
         if self.decoder_head == 'base':
@@ -155,15 +106,11 @@ class LBPPolicy(nn.Module):
             return self.head.generate(all_obs)
 
     def forward(self, cur_images, cur_proprios, cur_actions, instruction, **kwargs):
-        # lang_emb, fused_goal = self.forward_cond(cur_images, instruction)
-        # all_obs = self.forward_obs(cur_images, cur_proprios, lang_emb, fused_goal)
         all_obs = self.forward_cond(cur_images, cur_proprios, instruction)
         loss = self.forward_head(all_obs, cur_actions)
         return loss, dict(loss=loss)
 
     def generate(self, cur_images, cur_proprios, instruction, **kwargs):
-        # lang_emb, fused_goal = self.forward_cond(cur_images, instruction)
-        # all_obs = self.forward_obs(cur_images, cur_proprios, lang_emb, fused_goal)
         all_obs = self.forward_cond(cur_images, cur_proprios, instruction)
         pred_actions = self.generate_head(all_obs)
         return pred_actions, dict(actions=pred_actions)
