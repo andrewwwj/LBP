@@ -124,14 +124,14 @@ def train(config, logger, model, train_loader, optimizer, lr_scheduler):
                 current_time = time.time()
                 elapsed_time_sec, elapsed_time = format_time_hms(current_time, start_time)
                 iter_time_sec, iter_time = format_time_hms(current_time, iter_start_time)
-                data_time_sec, data_time = format_time_hms(data_time)
+                # data_time_sec, data_time = format_time_hms(data_time)
                 eta_sec, eta = format_time_hms(iter_time_sec * (len(train_loader)-ep_iter-1))
                 logger.log_msg_every(
                     f"Iter [{ep_iter}/{len(train_loader)}], "
                     f"loss: {loss_metric['loss']:.4f}, "
                     f"lr: {loss_metric['lr']:.6f}, "
-                    f"iter_time: {iter_time_sec:.4f}s, "
-                    f"data_time: {data_time_sec:.4f}s, "
+                    # f"iter_time: {iter_time_sec:.4f}s, "
+                    # f"data_time: {data_time_sec:.4f}s, "
                     f"elapsed_time: {elapsed_time}, "
                     f"eta: {eta}, ")
         

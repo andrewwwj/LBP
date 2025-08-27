@@ -8,7 +8,7 @@ task_data = defaultdict(list)
 summary_data = defaultdict(list)
 
 # base_dir = "/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/cfg/08-18_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407/Eval_Model_ckpt_100000/libero_10"
-base_dir = "/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/baseline/08-11_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407/Eval_Model_ckpt_100000/libero_10"
+base_dir = "/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/exp/08-26_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407/Eval_Model_ckpt_100000/libero_10"
 result_dir = os.path.join(base_dir, "results.json")
 use_parsing = False
 parsing_key = "// w_cfg = 2.0"

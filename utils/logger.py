@@ -38,11 +38,13 @@ class Logger(object):
             raise NotImplementedError
 
     def log_msg_every(self, msg):
-        print(f"[rank {self.global_rank}]: {msg}")
+        # print(f"[rank {self.global_rank}]: {msg}")
+        print(msg)
 
     def log_msg(self, msg):
         if self.global_rank == 0:
-            print(f"[rank {self.global_rank}]: {msg}")
+            # print(f"[rank {self.global_rank}]: {msg}")
+            print(msg)
 
     def log_metric(self, metric: dict):
         avg_metric = {}

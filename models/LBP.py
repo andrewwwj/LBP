@@ -1,9 +1,3 @@
-# from timm.layers import Mlp
-# import torch
-# import torch.nn as nn
-# import torch.nn.functional as F
-# import DecisionNCE
-# import math
 import torch
 import torch.nn as nn
 # from .components.MlpResNet import MlpResNet
@@ -53,8 +47,6 @@ class LBPPolicy(nn.Module):
         # proprio encoder
         self.proprio_dim = proprio_input_dim
         # self.proprio_encoder = Mlp(proprio_input_dim, proprio_hidden_dim, proprio_hidden_dim, norm_layer=nn.LayerNorm)
-        use_separate_condition = kwargs.get('use_separate_condition')
-        self.use_separate_condition = use_separate_condition if use_separate_condition is not None else False
 
         # action decoder
         self.decoder_head = decoder_head
@@ -71,7 +63,6 @@ class LBPPolicy(nn.Module):
                 proprio_dim=self.proprio_dim,
                 vis_lang_dim=self.vision_dim,
                 latent_goal_dim=self.latent_dim,
-                use_separate_condition=self.use_separate_condition
             )
         # loss function
         self.loss_func = loss_func(**loss_func_conig)
