@@ -6,7 +6,6 @@ from .components.ActionHead import BaseHead, DDPMHead
 from .components.CrossAttn import CrossAttnBlock
 from .MidPlanner import mid_planner_dnce_noise
 
-
 class LBPPolicy(nn.Module):
     def __init__(
         self,
@@ -24,9 +23,16 @@ class LBPPolicy(nn.Module):
         loss_func_conig = dict(reduction='mean'),
         recursive_step = 2,
         num_attn_layers = 3,
+        policy_ckpt_path: str = None,
+        policy_config: dict = None,
+        expert_policy_ckpt_path: str = None,
+        expert_policy_config: dict = None,
+        diffusion_input_key: str = 'p',
+        energy_input_key: str = 'vg',
         **kwargs,
     ):
         super().__init__()
+        from .factory import create_model
         # condition encoder
         state_dict = torch.load(imaginator_ckpt_path, map_location='cpu')
         self.imaginator = mid_planner_dnce_noise(recursive_step=4)
@@ -35,6 +41,20 @@ class LBPPolicy(nn.Module):
         self.imaginator.requires_grad_(False)  # Freeze pre-trained planner
         self.recursive_step = recursive_step
         self.latent_dim = 1024
+        policy_ckpt = None
+        expert_policy_ckpt = None
+        if policy_ckpt_path and policy_config:
+            policy_ckpt = create_model(**policy_config)
+            state_dict = torch.load(policy_ckpt_path, map_location='cpu')
+            policy_ckpt.load_state_dict(state_dict, strict=True)
+            policy_ckpt.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else policy_ckpt
+            policy_ckpt.requires_grad_(False)  # Freeze pre-trained diffusion model
+        if expert_policy_ckpt_path and expert_policy_config:
+            expert_policy_ckpt = create_model(**expert_policy_config)
+            state_dict = torch.load(expert_policy_ckpt_path, map_location='cpu')
+            expert_policy_ckpt.load_state_dict(state_dict, strict=True)
+            expert_policy_ckpt.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else expert_policy_ckpt
+            expert_policy_ckpt.requires_grad_(False)  # Freeze pre-trained expert diffusion model
 
         # context fusion
         self.goal_fusion = CrossAttnBlock(embed_dim=self.latent_dim, num_layers=num_attn_layers)
@@ -63,6 +83,10 @@ class LBPPolicy(nn.Module):
                 proprio_dim=self.proprio_dim,
                 vis_lang_dim=self.vision_dim,
                 latent_goal_dim=self.latent_dim,
+                policy_ckpt=policy_ckpt,
+                expert_policy_ckpt=expert_policy_ckpt,
+                diffusion_input_key=diffusion_input_key,
+                energy_input_key=energy_input_key,
             )
         # loss function
         self.loss_func = loss_func(**loss_func_conig)
@@ -105,7 +129,6 @@ class LBPPolicy(nn.Module):
         all_obs = self.forward_cond(cur_images, cur_proprios, instruction)
         pred_actions = self.generate_head(all_obs)
         return pred_actions, dict(actions=pred_actions)
-
 
 
 def lbp_policy_ddpm_res18_libero(imaginator_ckpt_path, chunk_length=6, recursive_step=2, **kwargs):

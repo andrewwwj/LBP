@@ -1,6 +1,6 @@
 import os
 import torch
-from models import create_model
+from models.factory import create_model
 from datasets import create_engine, eval_libero
 from utils import RoboModelWrapper
 import json
@@ -37,7 +37,6 @@ def main():
         model.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if args.compile else model
         model = RoboModelWrapper(model)
         _, agent = create_engine(**config)
-
         agent.set_policy(model)
         result_path = os.path.join(config['output_dir'], f"Eval_{os.path.basename(ckpt_file).split('.')[0]}")
         print(f"Results will be saved to: {result_path}")

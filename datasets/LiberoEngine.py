@@ -367,7 +367,7 @@ class LIBEROEval():
             "camera_widths": self.camera_widths
         }
 
-        # init thesubprocess vector environment
+        # init the subprocess vector environment
         env_num = self.num_episodes
         env = SubprocVectorEnv(
             [lambda: OffScreenRenderEnv(**env_args) for _ in range(env_num)]

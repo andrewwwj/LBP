@@ -1,6 +1,6 @@
 import os
+import json
 import time
-import hashlib
 import torch
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
@@ -10,7 +10,7 @@ from torch.nn.parallel import DistributedDataParallel
 import random
 import argparse
 import numpy as np
-from models import create_model
+from models.factory import create_model
 from datasets import create_engine
 from utils import init_ddp_env, close_ddp_env, save_checkpoint
 from utils import Logger, SmoothedValue, format_time_hms 
@@ -53,9 +53,12 @@ def get_args_parser():
 
     # Model Setting
     parser.add_argument('--model_name', default="bc_policy_res18_libero", type=str)
-    parser.add_argument('--imaginator_ckpt_path', type=str)
     parser.add_argument('--guidance_mode', type=lambda x: x.lower(), help='cg cfg energy')
-    parser.add_argument('--use_separate_condition', type=bool, default=False)
+    parser.add_argument('--imaginator_ckpt_path', type=str)
+    parser.add_argument('--policy_ckpt_path', type=str, default=None, help='Path to pre-trained diffusion planner')
+    parser.add_argument('--expert_policy_ckpt_path', type=str, default=None, help='Path to pre-trained expert diffusion planner')
+    parser.add_argument('--diffusion_input_key', type=str, default=None, help='Input modalities for diffusion planner')
+    parser.add_argument('--energy_input_key', type=str, default=None, help='Input modalities for energy function')
 
     # Engine Setting
     parser.add_argument('--engine_name', default="build_libero_engine", type=str)
@@ -158,6 +161,26 @@ def main(config):
         config['world_size'] = world_size
         config['global_rank'] = global_rank
         config['local_rank'] = local_rank
+    if config.get('policy_ckpt_path'):
+        print(f"Loading pre-trained policy from: {config['policy_ckpt_path']}")
+        ckpt_path = config['policy_ckpt_path']
+        ckpt_dir = os.path.dirname(ckpt_path)
+        config_path = os.path.join(ckpt_dir, 'config.json')
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"config.json not found in {ckpt_dir}")
+        with open(config_path, 'r') as f:
+            policy_config = json.load(f)
+        config['policy_config'] = policy_config
+    if config.get('expert_policy_ckpt_path'):
+        print(f"Loading pre-trained expert policy from: {config['expert_policy_ckpt_path']}")
+        ckpt_path = config['expert_policy_ckpt_path']
+        ckpt_dir = os.path.dirname(ckpt_path)
+        config_path = os.path.join(ckpt_dir, 'config.json')
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"config.json not found in {ckpt_dir}")
+        with open(config_path, 'r') as f:
+            policy_config = json.load(f)
+        config['expert_policy_config'] = policy_config
     # counter = 1
     # base_path = config['output_dir']
     # while os.path.exists(config['output_dir']):
