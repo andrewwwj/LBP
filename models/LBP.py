@@ -41,20 +41,23 @@ class LBPPolicy(nn.Module):
         self.imaginator.requires_grad_(False)  # Freeze pre-trained planner
         self.recursive_step = recursive_step
         self.latent_dim = 1024
-        policy_ckpt = None
-        expert_policy_ckpt = None
+        policy_dict = {}
         if policy_ckpt_path and policy_config:
             policy_ckpt = create_model(**policy_config)
             state_dict = torch.load(policy_ckpt_path, map_location='cpu')
             policy_ckpt.load_state_dict(state_dict, strict=True)
             policy_ckpt.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else policy_ckpt
             policy_ckpt.requires_grad_(False)  # Freeze pre-trained diffusion model
+            policy_ckpt.eval()
+            policy_dict['student'] = policy_ckpt.cuda()
         if expert_policy_ckpt_path and expert_policy_config:
             expert_policy_ckpt = create_model(**expert_policy_config)
             state_dict = torch.load(expert_policy_ckpt_path, map_location='cpu')
             expert_policy_ckpt.load_state_dict(state_dict, strict=True)
             expert_policy_ckpt.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else expert_policy_ckpt
             expert_policy_ckpt.requires_grad_(False)  # Freeze pre-trained expert diffusion model
+            expert_policy_ckpt.eval()
+            policy_dict['expert'] = expert_policy_ckpt.cuda()
 
         # context fusion
         self.goal_fusion = CrossAttnBlock(embed_dim=self.latent_dim, num_layers=num_attn_layers)
@@ -83,10 +86,9 @@ class LBPPolicy(nn.Module):
                 proprio_dim=self.proprio_dim,
                 vis_lang_dim=self.vision_dim,
                 latent_goal_dim=self.latent_dim,
-                policy_ckpt=policy_ckpt,
-                expert_policy_ckpt=expert_policy_ckpt,
                 diffusion_input_key=diffusion_input_key,
                 energy_input_key=energy_input_key,
+                policy_dict=policy_dict
             )
         # loss function
         self.loss_func = loss_func(**loss_func_conig)

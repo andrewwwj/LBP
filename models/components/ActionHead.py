@@ -46,10 +46,9 @@ class DDPMHead(nn.Module):
             proprio_dim: int = None,
             latent_goal_dim: int = None,
             vis_lang_dim: int = None,
-            policy_ckpt: nn.Module = None,
-            expert_policy_ckpt: nn.Module = None,
             diffusion_input_key: str = None,
-            energy_input_key: str = None
+            energy_input_key: str = None,
+            policy_dict: dict = None
     ):
         super().__init__()
         self.mode = guidance_mode
@@ -68,18 +67,19 @@ class DDPMHead(nn.Module):
                             }
         self.diffusion_input_key = diffusion_input_key
         self.energy_input_key = energy_input_key
-
         self.diffusion_input_dim = combination_dict[self.diffusion_input_key]
         self.energy_input_dim = combination_dict[self.energy_input_key]
-        self.model = MlpResNet(num_blocks=num_blocks,
-                               input_dim=self.diffusion_input_dim + action_size + time_hidden_dim,
-                               hidden_dim=hidden_dim,
-                               output_size=action_size)
-        critic_input_dim = self.energy_input_dim + action_size + time_hidden_dim
+        # TODO Need to check
+        if self.mode != 'energy':
+            self.model = MlpResNet(num_blocks=num_blocks,
+                                   input_dim=self.diffusion_input_dim + action_size + time_hidden_dim,
+                                   hidden_dim=hidden_dim, output_size=action_size)
 
         if self.mode == 'cg':
             pass
         elif self.mode == 'energy':
+            critic_input_dim = self.energy_input_dim + action_size + time_hidden_dim
+            self.policy_dict = policy_dict
             # Q-networks for Double Q-learning
             def create_q_network():
                 return nn.Sequential(
@@ -91,11 +91,10 @@ class DDPMHead(nn.Module):
                     nn.LayerNorm(hidden_dim),
                     nn.Linear(hidden_dim, 1)
                 )
-
+            # Current Q-networks
             self.q0_network = create_q_network()
             self.q1_network = create_q_network()
-
-            # Target networks
+            # Target Q-networks
             self.q0_target = copy.deepcopy(self.q0_network)
             self.q1_target = copy.deepcopy(self.q1_network)
             for param in self.q0_target.parameters():
@@ -103,17 +102,13 @@ class DDPMHead(nn.Module):
             for param in self.q1_target.parameters():
                 param.requires_grad = False
 
-            # Load pre-trained diffusion model q(a | c)
-            self.policy_ckpt = policy_ckpt
-            self.expert_policy_ckpt = expert_policy_ckpt
-
             # CEP hyperparameters
             self.w_critic_loss = 0.1
             self.w_sigma = 0.5
             self.temperature = 0.1  # Temperature for distance-based weighting
             self.alpha = 3.0  # Temperature parameter for softmax
             self.guidance_scale = 1.0  # Guidance strength
-            self.num_samples = 128  # Number of samples for CEP loss
+            self.num_samples = 64  # Number of samples for CEP loss
             self.tau = 0.005  # Soft update rate for target network
             # self.use_gradient_penalty = True
             # self.grad_penalty_weight = 0.1
@@ -146,7 +141,7 @@ class DDPMHead(nn.Module):
         vl_semantics, proprio_obs, fused_goal = all_obs
         modality_dict = {'v': vl_semantics, 'p': proprio_obs, 'g': fused_goal, }
         diffusion_obs = torch.cat([modality_dict[key] for key in self.diffusion_input_key], dim=-1)
-        energy_obs = torch.cat([modality_dict[key] for key in self.energy_input_key], dim=-1)
+        # energy_obs = torch.cat([modality_dict[key] for key in self.energy_input_key], dim=-1)
 
         if self.mode == 'cg':
             # Sample t & noisy action at t
@@ -176,10 +171,11 @@ class DDPMHead(nn.Module):
             diffusion_loss = F.mse_loss(noise_pred, noise)
             return diffusion_loss
         elif self.mode == 'energy':
+            student_policy = self.policy_dict['student']
+            expert_policy = self.policy_dict['expert']
             # vpg input
             vpg_obs = torch.cat([vl_semantics, proprio_obs, fused_goal], dim=-1)
-            # Load pre-trained expert diffusion policy q(a | v, p, g)
-            # Load pre-trained student diffusion policy q(a | p)
+            vg_obs = torch.cat([vl_semantics, fused_goal], dim=-1)
             # Store predictions for each step
             B, T, S, A = diffusion_obs.shape[0], self.num_timesteps, self.num_samples, self.action_size
             action_ref_buffer = torch.zeros(T, B, A, device=diffusion_obs.device)
@@ -187,14 +183,14 @@ class DDPMHead(nn.Module):
             action_pred_buffer = torch.zeros(T, B, S, A, device=diffusion_obs.device)
             noise_pred_buffer = torch.zeros(T, B, S, A, device=diffusion_obs.device)
             with torch.no_grad():
-                # Sample noise action
-                action_t = torch.randn((B, A), device=energy_obs.device)
+                # Sample noise actions from expert q(a | v, p, g) and student q(a | p)
+                action_t = torch.randn((B, A), device=vg_obs.device)
 
                 for t in reversed(range(self.num_timesteps)):
-                    t_tensor = torch.full((B, 1), t, device=energy_obs.device, dtype=torch.long)
+                    t_tensor = torch.full((B, 1), t, device=vg_obs.device, dtype=torch.long)
                     # --- 1. Generate Reference Action (Positive Sample) ---
-                    noise_ref = self.expert_policy_ckpt.head.forward_features(vpg_obs, t_tensor, action_t)
-                    action_ref = self.expert_policy_ckpt.head.denoise(action_t, t_tensor, noise_ref)
+                    noise_ref = expert_policy.head.forward_features(vpg_obs, t_tensor, action_t)
+                    action_ref = expert_policy.head.denoise(action_t, t_tensor, noise_ref)
                     action_ref_buffer[t] = action_ref
                     noise_ref_buffer[t] = noise_ref
                     # --- 2. Generate Predicted Actions (Negative Samples) - VECTORIZED ---
@@ -202,14 +198,13 @@ class DDPMHead(nn.Module):
                     t_tensor_ = t_tensor.repeat_interleave(S, dim=0)
                     # The noise for the student policy is the same as the expert's starting noise
                     action_t_ = action_t.repeat_interleave(S, dim=0)
-                    pred_noise = self.policy_ckpt.head.forward_features(proprio_obs_, t_tensor_, action_t_)
-                    action_pred_expanded = self.policy_ckpt.head.denoise(action_t_, t_tensor_, pred_noise)
+                    pred_noise = student_policy.head.forward_features(proprio_obs_, t_tensor_, action_t_)
+                    action_pred_expanded = student_policy.head.denoise(action_t_, t_tensor_, pred_noise)
                     # Reshape back to [B, S, A] and store
                     action_pred_buffer[t] = action_pred_expanded.view(B, S, A)
                     noise_pred_buffer[t] = pred_noise.view(B, S, A)
                     action_t = action_ref.clone()
-
-            loss = self.loss_energy(energy_obs, action_ref_buffer, action_pred_buffer)
+            loss = self.loss_energy(vg_obs, action_ref_buffer, action_pred_buffer)
             return loss
         else:
             raise NotImplementedError
@@ -245,8 +240,8 @@ class DDPMHead(nn.Module):
         energy_obs_flat = energy_obs.unsqueeze(0).expand(T, -1, -1).reshape(T * B, obs_dim)
 
         # Create and correctly embed time tensor
-        t_values = torch.arange(T, device=energy_obs.device).view(T, 1).expand(-1, B).reshape(T * B, 1)
-        time_embedding = self.time_process(t_values.float())
+        t_values = torch.arange(T, device=energy_obs.device).repeat_interleave(B).view(-1, 1).float()
+        time_embedding = self.time_process(t_values)
         time_embedding = self.time_encoder(time_embedding)  # [T * B, time_hidden_dim]
 
         # --- Weighted Contrastive Loss Calculation ---
@@ -342,7 +337,6 @@ class DDPMHead(nn.Module):
     #     contrastive_loss = -F.log_softmax(logits, dim=-1)[:, :, 0].mean()
     #     return contrastive_loss
 
-
     def generate(self, all_obs):
         vl_semantics, proprio_obs, fused_goal = all_obs
         modality_dict = {'v': vl_semantics, 'p': proprio_obs, 'g': fused_goal, }
@@ -376,9 +370,10 @@ class DDPMHead(nn.Module):
                 noise_pred = noise_pred_uncond + self.w_cfg * (noise_pred_cond - noise_pred_uncond)
                 action = self.denoise(action, t_tensor, noise_pred)
             elif self.mode == 'energy':
+                student_policy_head = self.policy_dict['student'].head
                 # Diffusion denoising with proprio conditioning
-                noise_pred = self.forward_features(diffusion_obs, t_tensor, action)
-                action = self.denoise(action, t_tensor, noise_pred)
+                noise_pred = student_policy_head.forward_features(diffusion_obs, t_tensor, action)
+                action = student_policy_head.denoise(action, t_tensor, noise_pred)
                 # Energy guidance
                 guidance = self.energy_guidance(action, t_tensor, energy_obs)
                 action = action + guidance
@@ -394,7 +389,7 @@ class DDPMHead(nn.Module):
     def energy_guidance(self, actions, t, condition):
         with torch.enable_grad():
             actions = actions.detach().requires_grad_(True)
-            t_emb = self.time_encoder(self.time_process(t.reshape(-1, 1).to(torch.float32) / self.num_timesteps))
+            t_emb = self.time_encoder(self.time_process(t.reshape(-1, 1).to(torch.float32)))
             q_values = self.q1_network(torch.cat([condition, actions, t_emb], dim=-1))
             guidance_scale = self.guidance_scale
             grad = torch.autograd.grad(torch.sum(q_values), actions, create_graph=False)[0]
