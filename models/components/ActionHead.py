@@ -56,6 +56,7 @@ class DDPMHead(nn.Module):
         self.num_timesteps = num_timesteps
         self.time_hidden_dim = time_hidden_dim
         self.action_size = action_size
+        self.num_samples = 64  # Number of action samples
         self.time_process = LearnedPosEmb(1, time_dim)
         self.time_encoder = Mlp(time_dim, time_hidden_dim, time_hidden_dim, norm_layer=nn.LayerNorm)
         # self.model = MlpResNet(num_blocks=num_blocks,
@@ -69,7 +70,6 @@ class DDPMHead(nn.Module):
         self.energy_input_key = energy_input_key
         self.diffusion_input_dim = combination_dict[self.diffusion_input_key]
         self.energy_input_dim = combination_dict[self.energy_input_key]
-        # TODO Need to check
         if self.mode != 'energy':
             self.model = MlpResNet(num_blocks=num_blocks,
                                    input_dim=self.diffusion_input_dim + action_size + time_hidden_dim,
@@ -108,7 +108,6 @@ class DDPMHead(nn.Module):
             self.temperature = 0.1  # Temperature for distance-based weighting
             self.alpha = 3.0  # Temperature parameter for softmax
             self.guidance_scale = 1.0  # Guidance strength
-            self.num_samples = 64  # Number of samples for CEP loss
             self.tau = 0.005  # Soft update rate for target network
         elif self.mode == 'cfg':
             self.cfg_prob = 0.1
