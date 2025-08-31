@@ -27,8 +27,8 @@ class LBPPolicy(nn.Module):
         policy_config: dict = None,
         expert_policy_ckpt_path: str = None,
         expert_policy_config: dict = None,
-        diffusion_input_key: str = 'vpg',
-        energy_input_key: str = 'vpg',
+        diffusion_input_key: str = 'pvg',
+        energy_input_key: str = 'pvg',
         **kwargs,
     ):
         super().__init__()
@@ -79,7 +79,7 @@ class LBPPolicy(nn.Module):
         elif decoder_head == 'ddpm':
             self.head = DDPMHead(
                 num_blocks=policy_num_blocks,
-                input_dim=self.vision_dim + self.proprio_dim + self.latent_dim,
+                pvg_dim=self.proprio_dim + self.vision_dim + self.latent_dim,
                 hidden_dim=policy_hidden_dim,
                 action_size=action_size * chunk_length,
                 guidance_mode=kwargs['guidance_mode'],

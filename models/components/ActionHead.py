@@ -21,8 +21,8 @@ class LearnedPosEmb(nn.Module):
 
 def cosine_beta_schedule(timesteps, s=0.008):
     """
-    cosine schedule
-    as proposed in https://openreview.net/forum?id=-NEXDKk8gZ
+        cosine schedule
+        as proposed in https://openreview.net/forum?id=-NEXDKk8gZ
     """
     steps = timesteps + 1
     t = torch.linspace(0, timesteps, steps) / timesteps
@@ -37,7 +37,7 @@ class DDPMHead(nn.Module):
             self,
             action_size: int = 7,
             num_blocks: int = 3,
-            input_dim: int = 544,
+            pvg_dim: int = 544,
             hidden_dim: int = 256,
             time_dim: int = 32,
             num_timesteps: int = 25,
@@ -59,31 +59,38 @@ class DDPMHead(nn.Module):
         self.num_samples = 64  # Number of action samples
         self.time_process = LearnedPosEmb(1, time_dim)
         self.time_encoder = Mlp(time_dim, time_hidden_dim, time_hidden_dim, norm_layer=nn.LayerNorm)
-        # self.model = MlpResNet(num_blocks=num_blocks,
-        #                        input_dim=input_dim + action_size + time_hidden_dim,
-        #                        hidden_dim=hidden_dim, output_size=action_size)
-        combination_dict = {'v': vis_lang_dim, 'p': proprio_dim, 'g': latent_goal_dim,
-                            'vp': vis_lang_dim + proprio_dim, 'vg': vis_lang_dim + latent_goal_dim,
-                            'pg': proprio_dim + latent_goal_dim, 'vpg': vis_lang_dim + proprio_dim + latent_goal_dim
-                            }
         self.diffusion_input_key = diffusion_input_key
-        self.energy_input_key = energy_input_key
+        self.energy_input_key = energy_input_key if self.mode == 'energy' else ''
+
+        combination_dict = {'v': vis_lang_dim, 'p': proprio_dim, 'g': latent_goal_dim,
+                            'vp': proprio_dim + vis_lang_dim, 'vg': vis_lang_dim + latent_goal_dim,
+                            'pg': proprio_dim + latent_goal_dim, 'pvg': proprio_dim + vis_lang_dim + latent_goal_dim
+                            }
         self.diffusion_input_dim = combination_dict[self.diffusion_input_key]
-        self.energy_input_dim = combination_dict[self.energy_input_key]
-        if self.mode != 'energy':
+        self.energy_input_dim = combination_dict[self.energy_input_key] if self.mode == 'energy' else 0
+        if self.mode == 'cg':
             self.model = MlpResNet(num_blocks=num_blocks,
                                    input_dim=self.diffusion_input_dim + action_size + time_hidden_dim,
+                                   hidden_dim=hidden_dim, output_size=action_size)
+        elif self.mode == 'cfg':
+            self.model = MlpResNet(num_blocks=num_blocks,
+                                   input_dim=pvg_dim + action_size + time_hidden_dim,
                                    hidden_dim=hidden_dim, output_size=action_size)
 
         if self.mode == 'cg':
             pass
+        elif self.mode == 'cfg':
+            self.cfg_prob = 0.1
+            self.w_cfg = 1.0
+            # self.uncond_embedding = nn.Parameter(torch.zeros(1, self.diffusion_input_dim))  # zero embedding
+            self.uncond_embedding = nn.Parameter(torch.randn(1, self.diffusion_input_dim))  # learnable embedding
         elif self.mode == 'energy':
             critic_input_dim = self.energy_input_dim + action_size + time_hidden_dim
             self.policy_dict = policy_dict
             # Q-networks for Double Q-learning
-            def create_q_network():
+            def create_q_network(critic_dim):
                 return nn.Sequential(
-                    nn.Linear(critic_input_dim, hidden_dim),
+                    nn.Linear(critic_dim, hidden_dim),
                     nn.ReLU(),
                     nn.LayerNorm(hidden_dim),
                     nn.Linear(hidden_dim, hidden_dim),
@@ -92,8 +99,8 @@ class DDPMHead(nn.Module):
                     nn.Linear(hidden_dim, 1)
                 )
             # Current Q-networks
-            self.q0_network = create_q_network()
-            self.q1_network = create_q_network()
+            self.q0_network = create_q_network(critic_input_dim)
+            self.q1_network = create_q_network(critic_input_dim)
             # Target Q-networks
             self.q0_target = copy.deepcopy(self.q0_network)
             self.q1_target = copy.deepcopy(self.q1_network)
@@ -109,10 +116,6 @@ class DDPMHead(nn.Module):
             self.alpha = 3.0  # Temperature parameter for softmax
             self.guidance_scale = 1.0  # Guidance strength
             self.tau = 0.005  # Soft update rate for target network
-        elif self.mode == 'cfg':
-            self.cfg_prob = 0.1
-            self.w_cfg = 2.0
-            self.uncond_embedding = nn.Parameter(torch.randn(1, self.diffusion_input_dim))
         else:
             raise NotImplementedError(f"Unknown mode {self.mode}")
         self.init_ddpm()
@@ -138,8 +141,7 @@ class DDPMHead(nn.Module):
         vl_semantics, proprio_obs, fused_goal = all_obs
         modality_dict = {'v': vl_semantics, 'p': proprio_obs, 'g': fused_goal, }
         diffusion_obs = torch.cat([modality_dict[key] for key in self.diffusion_input_key], dim=-1)
-        energy_obs = torch.cat([modality_dict[key] for key in self.energy_input_key], dim=-1)
-        vpg_obs = torch.cat([vl_semantics, proprio_obs, fused_goal], dim=-1)
+        pvg_obs = torch.cat([proprio_obs, vl_semantics, fused_goal], dim=-1)
         B, T, S, A = diffusion_obs.shape[0], self.num_timesteps, self.num_samples, self.action_size
 
         if self.mode == 'cg':
@@ -149,22 +151,24 @@ class DDPMHead(nn.Module):
             diffusion_loss = F.mse_loss(noise_pred, noise)
             return diffusion_loss
         elif self.mode == 'cfg':
+            assert self.diffusion_input_key == 'vg'
             # Sample t & noisy action at t
             noise, t_tensor, noisy_action = self.add_noise(cur_action)
-            """all_obs"""
-            # assert self.diffusion_input_key == 'vpg'
-            """ proprio_obs """
-            assert self.diffusion_input_key == 'p'
-            """ vl_semantics + fused_goal"""
-            # assert self.diffusion_input_key == 'vg'
-            """Common"""
             uncond_mask = torch.rand(diffusion_obs.shape[0], device=diffusion_obs.device) < self.cfg_prob
+
+            # 1) Use masking (unconditioning) for all obs
+            # diffusion_obs[uncond_mask] = self.uncond_embedding
+            # noise_pred = self.forward_features(diffusion_obs, t_tensor, noisy_action)
+            # 2) Use masking (unconditioning) for certain obs
             diffusion_obs[uncond_mask] = self.uncond_embedding
-            noise_pred = self.forward_features(diffusion_obs, t_tensor, noisy_action)
+            obs = torch.cat([proprio_obs, diffusion_obs], dim=-1)
+            noise_pred = self.forward_features(obs, t_tensor, noisy_action)
+
             diffusion_loss = F.mse_loss(noise_pred, noise)
             return diffusion_loss
         elif self.mode == 'energy':
-            assert self.energy_input_key == 'vpg' and self.diffusion_input_key == 'p'
+            assert self.energy_input_key == 'pvg' and self.diffusion_input_key == 'p'
+            energy_obs = torch.cat([modality_dict[key] for key in self.energy_input_key], dim=-1)
             student_policy = self.policy_dict['student']
             expert_policy = self.policy_dict['expert']
             # Vectorize obs for generating samples
@@ -183,7 +187,7 @@ class DDPMHead(nn.Module):
                 for t in reversed(range(self.num_timesteps)):
                     # --- 1. Generate Reference Action (Positive Sample) ---
                     t_tensor = torch.full((B, 1), t, device=diffusion_obs.device, dtype=torch.long)
-                    noise_ref = expert_policy.head.forward_features(vpg_obs, t_tensor, action_t_expert)
+                    noise_ref = expert_policy.head.forward_features(pvg_obs, t_tensor, action_t_expert)
                     action_t_expert = expert_policy.head.denoise(action_t_expert, t_tensor, noise_ref)
                     # --- 2. Generate Predicted Actions (Negative Samples) - VECTORIZED ---
                     t_tensor_ = t_tensor.repeat_interleave(S, dim=0)
@@ -293,8 +297,7 @@ class DDPMHead(nn.Module):
         vl_semantics, proprio_obs, fused_goal = all_obs
         modality_dict = {'v': vl_semantics, 'p': proprio_obs, 'g': fused_goal, }
         diffusion_obs = torch.cat([modality_dict[key] for key in self.diffusion_input_key], dim=-1)
-        energy_obs = torch.cat([modality_dict[key] for key in self.energy_input_key], dim=-1)
-        # vpg_obs = torch.cat([vl_semantics, proprio_obs, fused_goal], dim=-1)
+        # pvg_obs = torch.cat([vl_semantics, proprio_obs, fused_goal], dim=-1)
 
         shape = (diffusion_obs.shape[0], self.action_size)
         student_policy = self.policy_dict['student']
@@ -328,7 +331,8 @@ class DDPMHead(nn.Module):
                 noise_pred = noise_pred_uncond + self.w_cfg * (noise_pred_cond - noise_pred_uncond)
                 action_t = self.denoise(action_t, t_tensor, noise_pred)
             elif self.mode == 'energy':
-                assert self.energy_input_key == 'vpg' and self.diffusion_input_key == 'p'
+                assert self.energy_input_key == 'pvg' and self.diffusion_input_key == 'p'
+                energy_obs = torch.cat([modality_dict[key] for key in self.energy_input_key], dim=-1)
                 # Diffusion denoising with proprio conditioning
                 noise_t = student_policy.head.forward_features(diffusion_obs, t_tensor, action_t)
                 # Energy guidance
@@ -337,7 +341,7 @@ class DDPMHead(nn.Module):
                 noise_t = noise_t - self.guidance_scale * scale_factor * energy_grad
                 action_t = student_policy.head.denoise(action_t, t_tensor, noise_t)
                 # (Optional) Compare with expert policy
-                # noise_pred = expert_policy.head.forward_features(vpg_obs, t_tensor, action_expert)
+                # noise_pred = expert_policy.head.forward_features(pvg_obs, t_tensor, action_expert)
                 # action_expert = expert_policy.head.denoise(action_expert, t_tensor, noise_pred)
                 # error = F.mse_loss(action_t, action_expert)
                 # error_expert.append(error.item())
