@@ -27,8 +27,8 @@ class LBPPolicy(nn.Module):
         policy_config: dict = None,
         expert_policy_ckpt_path: str = None,
         expert_policy_config: dict = None,
-        diffusion_input_key: str = 'p',
-        energy_input_key: str = 'vg',
+        diffusion_input_key: str = 'vpg',
+        energy_input_key: str = 'vpg',
         **kwargs,
     ):
         super().__init__()
