@@ -39,8 +39,10 @@ PLANNER_MODEL_NAME="mid_planner_dnce_noise"
 PLANNER_RECURSIVE_STEP=4
 PLANNER_REC_PLAN_COEF=0.5
 #PLANNER_EXP_DIR="${LOG_DIR}/$(date +"%m-%d")_${PLANNER_MODEL_NAME}_hor${PLANNER_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
-#PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/baseline/08-11_mid_planner_dnce_noise_bs64_seed3407"  # libero10 baseline
-PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/baseline_w_p/08-29_mid_planner_dnce_noise_hor4_bs64_seed3407"  # # libero10-wo-t8 baseline
+# -- libero10 --
+#PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/baseline/08-11_mid_planner_dnce_noise_bs64_seed3407"
+# -- libero10-wo-t8 --
+PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/baseline_w_p/08-29_mid_planner_dnce_noise_hor4_bs64_seed3407"
 PLANNER_CKPT_PATH="${PLANNER_EXP_DIR}/Model_ckpt_100000.pth"
 
 # --- Policy-Specific Configuration ---
@@ -53,15 +55,19 @@ CHUNK_LENGTH=6
 USE_AC=True
 POLICY_GUIDANCE="cfg"
 
-DIFFUSION_INPUT_KEY="vg"
-ENERGY_INPUT_KEY=""
+DIFFUSION_INPUT_KEY="cg"
+ENERGY_INPUT_KEY="pvg"
 
 POLICY_EXP_DIR="${LOG_DIR}/$(date +"%m-%d")_${POLICY_MODEL_NAME}_hor${POLICY_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
-POLICY_CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/baseline_w_p/08-29_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407/Model_ckpt_100000.pth"
-EXPERT_POLICY_CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/baseline/08-27_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407/Model_ckpt_100000.pth"
+#POLICY_CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/baseline_w_p/08-29_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407/Model_ckpt_100000.pth"
+#EXPERT_POLICY_CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/cfg_w_vg_mask/08-31_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407/Model_ckpt_100000.pth"
 if [ -n "$EXPERT_POLICY_CKPT_PATH" ]; then
   POLICY_EXP_DIR="${LOG_DIR}/$(date +"%m-%d")_energy_guided_planner_bs${BS_PER_PROC}_seed${SEED}"
-  POLICY_ARG="--policy_ckpt_path $POLICY_CKPT_PATH --expert_policy_ckpt_path $EXPERT_POLICY_CKPT_PATH"
+  if [ -n "$POLICY_CKPT_PATH" ]; then
+    POLICY_ARG="--policy_ckpt_path $POLICY_CKPT_PATH --expert_policy_ckpt_path $EXPERT_POLICY_CKPT_PATH"
+  else
+    POLICY_ARG="--expert_policy_ckpt_path $EXPERT_POLICY_CKPT_PATH"
+  fi
 elif [ -n "$POLICY_CKPT_PATH" ]; then
   POLICY_ARG="--policy_ckpt_path $POLICY_CKPT_PATH"
 else

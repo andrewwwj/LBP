@@ -117,13 +117,13 @@ class LiberoProcessor(object):
 
 
 class LiberoDataset(Dataset):
-    def __init__(self, dataset_path, processor, chunk_length=6,
-                 recursive_step=4, rec_plan_coef=0.5):
+    def __init__(self, dataset_path, processor, chunk_length=6, recursive_step=4, rec_plan_coef=0.5, history_length=3):
         self.processor = processor
         self.dataset_path = dataset_path
         self.chunk_length = chunk_length
         self.recursive_step = recursive_step
         self.rec_plan_coef = rec_plan_coef
+        self.history_length = history_length  # Number of historical frames to use
         self.traj_files = {}
         self._load_metas()
 
@@ -146,17 +146,29 @@ class LiberoDataset(Dataset):
 
     def _load_from_raw_traj(self, f, cur_idx, goal_idx):
         assert self.main_view == self.views[0] and self.main_view == 'third_image'
-        # load images from all views
-        raw_images = []
+
+        # Prepare history indices with padding for initial frames
+        history_indices = [max(0, cur_idx - i * self.chunk_length) for i in range(self.history_length - 1, -1, -1)]
+
+        # Load images with history from all views
+        raw_images_history = []
         observations = f['observation']
-        for view in self.views:
-            raw_img = cv2.imdecode(observations[view][cur_idx], cv2.IMREAD_COLOR)
-            raw_images.append(raw_img)
-            # Visualize the image
-            # import matplotlib.pyplot as plt
-            # img_rgb = cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB)
-            # plt.figure(figsize=(8, 8))
-            # plt.imshow(img_rgb); plt.axis('off'); plt.show()
+        for hist_idx in history_indices:
+            view_images = []
+            for view in self.views:
+                raw_img = cv2.imdecode(observations[view][hist_idx], cv2.IMREAD_COLOR)
+                view_images.append(raw_img)
+                # Visualize the image
+                # import matplotlib.pyplot as plt
+                # img_rgb = cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB)
+                # plt.figure(figsize=(8, 8))
+                # plt.imshow(img_rgb); plt.axis('off'); plt.show()
+            raw_images_history.append(view_images)
+
+        # Current frame is the last in history
+        # raw_images = raw_images_history[-1]
+
+        # load subgoals (unchanged)
         # load subgoals
         subgoals = []
         for i in range(self.recursive_step):
@@ -164,19 +176,26 @@ class LiberoDataset(Dataset):
             raw_img = cv2.imdecode(observations[self.main_view][goal_idx], cv2.IMREAD_COLOR)
             subgoals.append(raw_img)
             goal_idx = cur_idx + int((goal_idx - cur_idx) * self.rec_plan_coef)
-            # Move rec_plan_coef * dist(goal-current) from cur_idx = Approach to current idx
+            # Move rec_plan_coef * dist(goal-current) from cur_idx => Backward approach to current idx
         # load actions with chunking
-        np_action = f['action'][()][cur_idx: cur_idx + self.chunk_length]
-        # np_action = f['action'][cur_idx: cur_idx + self.chunk_length]
-        if len(np_action) < self.chunk_length:
-            cnt = self.chunk_length - len(np_action)
-            padding = np.array([[0., 0., 0., 0., 0., 0., np_action[-1][-1]]]).repeat(cnt, axis=0)
-            np_action = np.concatenate([np_action, padding], axis=0)
-        # load proprio
-        raw_proprio = f['proprio'][()][cur_idx]
-        # load instruction
+        np_action_history = []
+        for idx in history_indices:
+            np_action = f['action'][()][idx: idx + self.chunk_length]
+            if len(np_action) < self.chunk_length:
+                cnt = self.chunk_length - len(np_action)
+                padding = np.array([[0., 0., 0., 0., 0., 0., np_action[-1][-1]]]).repeat(cnt, axis=0)
+                np_action = np.concatenate([np_action, padding], axis=0)
+            np_action_history.append(np_action)
+        prev_action = np_action_history[-2]
+        cur_action = np_action_history[-1]
+
+        # Load proprioceptive history
+        raw_proprio_history = [f['proprio'][()][hist_idx] for hist_idx in history_indices]
+
+        # Load instruction (same for all timesteps)
         instruction = f['language_instruction'][()].decode('utf-8')
-        return raw_images, subgoals, np_action, raw_proprio, instruction
+
+        return raw_images_history, subgoals, cur_action, prev_action, raw_proprio_history, instruction
 
     def __len__(self):
         return len(self.metas)
@@ -185,41 +204,78 @@ class LiberoDataset(Dataset):
         meta = self.metas[index]
         traj_path, cur_idx, goal_idx = meta[0], meta[1], meta[2]
         f = self.traj_files[traj_path]
-        raw_images, subgoals, np_action, raw_proprio, instruction = self._load_from_raw_traj(f, cur_idx, goal_idx)
-        cur_image, replay_params = self.processor.preprocess_image(raw_images[0])
-        final_images = [cur_image, *[self.processor.preprocess_image(img, replay_params)[0] for img in raw_images[1:]]]
+        raw_images_history, subgoals, cur_action, prev_action, raw_proprio_history, instruction = self._load_from_raw_traj(f, cur_idx, goal_idx)
+
+        # First, determine the augmentation parameters from the main view of the current frame
+        _, replay_params = self.processor.preprocess_image(raw_images_history[-1][0])
+
+        # Apply consistent augmentation to all historical frames and views
+        processed_images_history = []
+        for raw_images in raw_images_history:
+            # Apply the same replay_params to all views in a single timestep
+            final_images = [self.processor.preprocess_image(img, replay_params)[0] for img in raw_images]
+            processed_images_history.append(torch.stack(final_images))
+
+        # Stack history: [history_length, num_views, C, H, W]
+        final_images_history = torch.stack(processed_images_history)
+
+        # Process subgoals
         subgoals = [self.processor.preprocess_image(img, replay_params)[0] for img in subgoals]
-        final_images = torch.stack(final_images)
         subgoals = torch.stack(subgoals)
-        final_action = self.processor.preprocess_action(np_action) # 42
-        final_proprio = self.processor.preprocess_proprio(raw_proprio)
+
+        # Process actions
+        cur_action = self.processor.preprocess_action(cur_action)
+        prev_action = self.processor.preprocess_action(prev_action)
+
+        # Process proprioceptive history
+        final_proprio_history = torch.stack([self.processor.preprocess_proprio(prop) for prop in raw_proprio_history])
+
         item = {
-            'sub_goals': subgoals,
-            'cur_images': final_images,
-            'cur_actions': final_action,
-            'cur_proprios': final_proprio,
-            'instruction': instruction,
+            'cur_images': final_images_history[-1],          # Current images [num_views, C, H, W]
+            'cur_proprios': final_proprio_history[-1],       # Current proprio [proprio_size]
+            'cur_actions': cur_action,                       # [chunk_length * action_size]
+            'prev_action': prev_action,                      # [history_length, action_size]
+            'sub_goals': subgoals,                           # [recursive_step, C, H, W]
+            'instruction': instruction,                      # str
+            'images_history': final_images_history,          # [history_length, num_views, C, H, W]
+            'proprios_history': final_proprio_history,       # [history_length, proprio_size]
             'traj_path': meta[0],
             'cur_idx': meta[1],
         }
         return item
 
 class LiberoAgent(object):
-    def __init__(self, processor, use_ac = True):
+    def __init__(self, processor, use_ac = True, history_length=2, action_size=7, chunk_length=6):
         super().__init__()
         self.use_ac = use_ac
         self.constant = 10000
         self.processor = processor
         self.policy = None
+        self.history_length = history_length
+        self.action_size = action_size
+        self.chunk_length = chunk_length
+        # Initialize history buffers
+        self.agent_view_history = []
+        self.wrist_view_history = []
+        self.proprio_history = []
+        self.action_history = []
 
     def set_policy(self, policy):
         assert hasattr(policy, 'generate') and callable(getattr(policy, 'generate')), \
         "The policy must have a callable 'generate' method."
         self.policy = policy
+        self.policy.eval()
 
     def _init_action_chunking(self, eval_horizon: int=600, num_samples: int=1):
         self.all_time_actions = np.ones([num_samples, eval_horizon, eval_horizon+50, 7]) * self.constant
+        # Reset history buffers for new episode
+        self.agent_view_history = []
+        self.wrist_view_history = []
+        self.proprio_history = []
+        self.action_history = []
+        self.prev_action = torch.zeros((1, self.action_size * self.chunk_length))
 
+    @torch.no_grad()
     def get_ac_action(self, actions, t: int, k: float=0.25):
         B, N, D = actions.shape
         self.all_time_actions[:, [t], t:t+N] = np.expand_dims(actions, axis=1)   # B, horizon, horizon+ac_num, 7
@@ -238,16 +294,64 @@ class LiberoAgent(object):
         # raw_proprio B 9
         # instruction ['xxx', ..., 'xxx']
 
+        # Update history buffers
+        if t <= 0 or len(self.agent_view_history) == 0:  # First step or reset
+            # Initialize history with repeated first frame
+            self.agent_view_history = [agent_view_images] * self.history_length
+            self.wrist_view_history = [wrist_view_images] * self.history_length
+            self.proprio_history = [raw_proprio] * self.history_length
+        else:
+            # Append new observations and maintain history length
+            self.agent_view_history.append(agent_view_images)
+            self.wrist_view_history.append(wrist_view_images)
+            self.proprio_history.append(raw_proprio)
+
+            # Keep only the last history_length frames
+            if len(self.agent_view_history) > self.history_length:
+                self.agent_view_history = self.agent_view_history[-self.history_length:]
+                self.wrist_view_history = self.wrist_view_history[-self.history_length:]
+                self.proprio_history = self.proprio_history[-self.history_length:]
+
+        # Process current frame (last in history)
         agent_view_images = torch.stack([self.processor.preprocess_image(image)[0] for image in agent_view_images]).unsqueeze(1)
         wrist_view_images = torch.stack([self.processor.preprocess_image(image)[0] for image in wrist_view_images]).unsqueeze(1)
         final_images = torch.cat([agent_view_images, wrist_view_images], dim=1)
         final_proprio = torch.stack([self.processor.preprocess_proprio(proprio) for proprio in raw_proprio])
+
+        # Process history
+        agent_view_history_processed = []
+        wrist_view_history_processed = []
+        proprio_history_processed = []
+
+        for hist_agent, hist_wrist, hist_proprio in zip(self.agent_view_history, self.wrist_view_history, self.proprio_history):
+            agent_hist = torch.stack([self.processor.preprocess_image(img)[0] for img in hist_agent]).unsqueeze(1)
+            wrist_hist = torch.stack([self.processor.preprocess_image(img)[0] for img in hist_wrist]).unsqueeze(1)
+            proprio_hist = torch.stack([self.processor.preprocess_proprio(p) for p in hist_proprio])
+
+            agent_view_history_processed.append(agent_hist)
+            wrist_view_history_processed.append(wrist_hist)
+            proprio_history_processed.append(proprio_hist)
+
+        # Stack history: [B, history_length, num_views, C, H, W] for images
+        # [B, history_length, proprio_dim] for proprioception
+        images_history = []
+        for agent_hist, wrist_hist in zip(agent_view_history_processed, wrist_view_history_processed):
+            images_history.append(torch.cat([agent_hist, wrist_hist], dim=1))
+        images_history = torch.stack(images_history, dim=1)  # [B, history_length, num_views, C, H, W]
+        proprios_history = torch.stack(proprio_history_processed, dim=1)  # [B, history_length, proprio_dim]
+
         batch = {
             'cur_images': final_images,
             'cur_proprios': final_proprio,
+            'images_history': images_history,
+            'proprios_history': proprios_history,
             'instruction': instruction,
+            'prev_action': self.prev_action
         }
         actions, _ = self.policy.generate(**batch)
+        # Update prev_action for the next step
+        self.prev_action = actions.detach().clone()
+
         actions = self.processor.postprocess_action(actions)
         if self.use_ac:
             assert t >= 0, f"Invalid value for t: {t}. In action chunking, t must be equal to current rollout step."
@@ -263,22 +367,20 @@ def build_libero_processor(dataset_path, img_size=224, training=True):
     return processor
 
 def build_libero_dataloader(dataset_path, processor, chunk_length=6, recursive_step=4, rec_plan_coef=0.5,
-                        batch_size=2, num_workers=2, shuffle=True, pin_mem=True, drop_last=True,
-                        world_size=1, global_rank=0):
-
+                        batch_size=2, num_workers=2, shuffle=True, pin_mem=True, drop_last=True, world_size=1, global_rank=0, history_length=3):
     train_dataset = LiberoDataset(dataset_path=dataset_path, processor=processor, chunk_length=chunk_length,
-                                  recursive_step=recursive_step, rec_plan_coef=rec_plan_coef)
+                                  recursive_step=recursive_step, rec_plan_coef=rec_plan_coef, history_length=history_length)
     sampler = DistributedSampler(train_dataset, shuffle=shuffle, num_replicas=world_size, rank=global_rank)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=num_workers,
                                  sampler=sampler, pin_memory=pin_mem, drop_last=drop_last, persistent_workers=True)
     return train_dataloader
 
-def build_libero_agent(processor, use_ac=True):
-    agent = LiberoAgent(processor, use_ac)
+def build_libero_agent(processor, use_ac=True, history_length=3, action_size=7, chunk_length=6):
+    agent = LiberoAgent(processor, use_ac, history_length=history_length, action_size=action_size, chunk_length=chunk_length)
     return agent
 
 def build_libero_engine(dataset_path, img_size=224, # processor
-                        recursive_step=4, rec_plan_coef=0.5, # dataloader
+                        recursive_step=4, rec_plan_coef=0.5, history_length=2, # dataloader
                         chunk_length=6, batch_size=2, num_workers=2, # dataloader
                         shuffle=True, pin_mem=True, drop_last=True, # dataloader
                         world_size=1, global_rank=0, # dataloader
@@ -286,13 +388,14 @@ def build_libero_engine(dataset_path, img_size=224, # processor
                         **kwargs):
 
     processor = build_libero_processor(dataset_path, img_size=img_size, training=True)
-    train_dataloader = build_libero_dataloader(dataset_path, processor=processor, chunk_length=chunk_length,
-                                               recursive_step=recursive_step, rec_plan_coef=rec_plan_coef,
+    train_dataloader = build_libero_dataloader(dataset_path, processor=processor,
+                                               chunk_length=chunk_length, recursive_step=recursive_step,
+                                               rec_plan_coef=rec_plan_coef, history_length=history_length,
                                                batch_size=batch_size, num_workers=num_workers,
                                                shuffle=shuffle, pin_mem=pin_mem, drop_last=drop_last,
                                                world_size=world_size, global_rank=global_rank)
     processor = build_libero_processor(dataset_path, img_size=img_size, training=False)
-    agent = build_libero_agent(processor=processor, use_ac=use_ac)
+    agent = build_libero_agent(processor=processor, use_ac=use_ac, history_length=history_length, chunk_length=chunk_length)
     return train_dataloader, agent
 
 # simulation env
@@ -326,7 +429,7 @@ class LIBEROEval():
     def __init__(self, task_suite_name: str, use_ac = True,
                 obs_key: list=['agentview_image', 'robot0_eye_in_hand_image', 'robot0_gripper_qpos', 'robot0_eef_pos', 'robot0_eef_quat'],
                 data_statistics: dict=None, logger = None, eval_horizon: int=600, camera_heights=256, camera_widths=256,
-                num_episodes: int=10, eval_freq: int=10, seed: int=42, rank: int=0):
+                num_episodes: int=10, eval_freq: int=10, seed: int=42, rank: int=0, history_length: int=3):
 
         self.task_suite_name = task_suite_name
         self.task_list = LIBERO_DATASETS[self.task_suite_name]
@@ -342,6 +445,7 @@ class LIBEROEval():
         self.use_ac = use_ac
         self.camera_heights = camera_heights
         self.camera_widths = camera_widths
+        self.history_length = history_length
 
     def _make_dir(self, save_path):
         if self.rank == 0:
@@ -446,6 +550,7 @@ class LIBEROEval():
             eef_quat = obs['robot0_eef_quat']
             agent_view = np.flip(np.flip(obs['agentview_image'], 1), 2)
             wrist_view = obs['robot0_eye_in_hand_image']
+            # TODO implement proprio history
             proprios = np.concatenate([gripper_qpos, eef_pos, eef_quat], axis=-1)
             lang_instruction = [lang] * self.num_episodes
             # get action

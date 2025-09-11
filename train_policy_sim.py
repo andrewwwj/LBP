@@ -59,6 +59,7 @@ def get_args_parser():
     parser.add_argument('--expert_policy_ckpt_path', type=str, default=None, help='Path to pre-trained expert diffusion planner')
     parser.add_argument('--diffusion_input_key', type=str, default=None, help='Input modalities for diffusion planner')
     parser.add_argument('--energy_input_key', type=str, default=None, help='Input modalities for energy function')
+    parser.add_argument('--w_cfg', type=float, default=1.0)
 
     # Engine Setting
     parser.add_argument('--engine_name', default="build_libero_engine", type=str)
@@ -70,6 +71,7 @@ def get_args_parser():
     parser.add_argument('--pin_mem', default=True, type=lambda x: x.lower() == 'true')
     parser.add_argument('--drop_last', default=True, type=lambda x: x.lower() == 'true')
     parser.add_argument('--use_ac', default=True, type=lambda x: x.lower() == 'true')
+    parser.add_argument('--history_length', default=2, type=int, help='Length of observation history')
 
     # Distributed Training Parameters
     parser.add_argument("--local_rank", default=0, type=int, help='local rank')
@@ -105,7 +107,7 @@ def train(config, logger, model, train_loader, optimizer, lr_scheduler):
 
     for ep_iter, (batch, data_time) in enumerate(train_loader):
         iter_start_time = time.time()
-        
+        batch['ep_iter'] = ep_iter
         # calculate loss and update model
         loss, loss_metric = model(**batch)
         optimizer.zero_grad()

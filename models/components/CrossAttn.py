@@ -22,8 +22,7 @@ class CrossAttnLayer(nn.Module):
         return x, attn_weights
         
 class CrossAttnBlock(nn.Module):
-    def __init__(self, embed_dim=1024, dim_feedforward=2048, num_heads=8, 
-                 num_layers=3, activation=F.gelu ,drop_out_rate=0.):
+    def __init__(self, embed_dim=1024, dim_feedforward=2048, num_heads=8, num_layers=3, activation=F.gelu ,drop_out_rate=0.):
         super(CrossAttnBlock, self).__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads

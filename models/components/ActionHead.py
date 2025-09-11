@@ -6,7 +6,6 @@ import torch
 import torch.nn as nn
 from .MlpResNet import MlpResNet
 
-
 class LearnedPosEmb(nn.Module):
     def __init__(self, input_size, output_size):
         super().__init__()
@@ -46,9 +45,11 @@ class DDPMHead(nn.Module):
             proprio_dim: int = None,
             latent_goal_dim: int = None,
             vis_lang_dim: int = None,
+            context_dim: int = None,
             diffusion_input_key: str = None,
             energy_input_key: str = None,
-            policy_dict: dict = None
+            policy_dict: dict = None,
+            **kwargs
     ):
         super().__init__()
         self.mode = guidance_mode
@@ -62,28 +63,48 @@ class DDPMHead(nn.Module):
         self.diffusion_input_key = diffusion_input_key
         self.energy_input_key = energy_input_key if self.mode == 'energy' else ''
 
-        combination_dict = {'v': vis_lang_dim, 'p': proprio_dim, 'g': latent_goal_dim,
+        dim_combination = {'v': vis_lang_dim, 'p': proprio_dim, 'g': latent_goal_dim,
                             'vp': proprio_dim + vis_lang_dim, 'vg': vis_lang_dim + latent_goal_dim,
-                            'pg': proprio_dim + latent_goal_dim, 'pvg': proprio_dim + vis_lang_dim + latent_goal_dim
+                            'pg': proprio_dim + latent_goal_dim, 'pvg': proprio_dim + vis_lang_dim + latent_goal_dim,
+                            'c': context_dim, 'cv': context_dim + vis_lang_dim, 'cg': context_dim + latent_goal_dim,
+                            'cvg': context_dim + vis_lang_dim + latent_goal_dim,
                             }
-        self.diffusion_input_dim = combination_dict[self.diffusion_input_key]
-        self.energy_input_dim = combination_dict[self.energy_input_key] if self.mode == 'energy' else 0
+        self.diffusion_input_dim = dim_combination[self.diffusion_input_key]
+        self.energy_input_dim = dim_combination[self.energy_input_key] if self.mode == 'energy' else 0
         if self.mode == 'cg':
             self.model = MlpResNet(num_blocks=num_blocks,
                                    input_dim=self.diffusion_input_dim + action_size + time_hidden_dim,
                                    hidden_dim=hidden_dim, output_size=action_size)
         elif self.mode == 'cfg':
+            use_mode_flag = False
+            if use_mode_flag:
+                input_dim = self.diffusion_input_dim + action_size + time_hidden_dim + 2
+            else:
+                input_dim = self.diffusion_input_dim + action_size + time_hidden_dim
             self.model = MlpResNet(num_blocks=num_blocks,
-                                   input_dim=pvg_dim + action_size + time_hidden_dim,
+                                   input_dim=input_dim,
                                    hidden_dim=hidden_dim, output_size=action_size)
-
         if self.mode == 'cg':
             pass
         elif self.mode == 'cfg':
-            self.cfg_prob = 0.1
-            self.w_cfg = 1.0
+            self.cfg_prob = 0.2
+            self.w_cfg = kwargs['w_cfg']
             # self.uncond_embedding = nn.Parameter(torch.zeros(1, self.diffusion_input_dim))  # zero embedding
-            self.uncond_embedding = nn.Parameter(torch.randn(1, self.diffusion_input_dim))  # learnable embedding
+            # self.uncond_embedding = nn.Parameter(torch.randn(1, self.diffusion_input_dim) * 0.02)  # learnable embedding
+            # self.uncond_embedding = torch.zeros(1, self.diffusion_input_dim)
+            # 1) Null embedding = non-learnable zero embedding
+            # self.uncond_embedding = {
+            #     'v': torch.zeros(1, vis_lang_dim),
+            #     'p': torch.zeros(1, proprio_dim),
+            #     'g': torch.zeros(1, latent_goal_dim)
+            # }
+            # 2) Null embedding = learnable embedding w/ randn initialization
+            self.uncond_embedding = nn.ParameterDict({
+                'c': nn.Parameter(torch.randn(1, context_dim)),
+                # 'p': nn.Parameter(torch.randn(1, proprio_dim)),
+                # 'v': nn.Parameter(torch.randn(1, vis_lang_dim)),
+                'g': nn.Parameter(torch.randn(1, latent_goal_dim))
+            })
         elif self.mode == 'energy':
             critic_input_dim = self.energy_input_dim + action_size + time_hidden_dim
             self.policy_dict = policy_dict
@@ -138,12 +159,10 @@ class DDPMHead(nn.Module):
         return noise_pred
 
     def forward(self, all_obs, cur_action):
-        vl_semantics, proprio_obs, fused_goal = all_obs
-        modality_dict = {'v': vl_semantics, 'p': proprio_obs, 'g': fused_goal, }
+        vl_semantics, proprio_obs, fused_goal, context = all_obs
+        modality_dict = {'c': context, 'v': vl_semantics, 'p': proprio_obs, 'g': fused_goal, }
         diffusion_obs = torch.cat([modality_dict[key] for key in self.diffusion_input_key], dim=-1)
-        pvg_obs = torch.cat([proprio_obs, vl_semantics, fused_goal], dim=-1)
         B, T, S, A = diffusion_obs.shape[0], self.num_timesteps, self.num_samples, self.action_size
-
         if self.mode == 'cg':
             # Sample t & noisy action at t
             noise, t_tensor, noisy_action = self.add_noise(cur_action)
@@ -151,28 +170,49 @@ class DDPMHead(nn.Module):
             diffusion_loss = F.mse_loss(noise_pred, noise)
             return diffusion_loss
         elif self.mode == 'cfg':
-            assert self.diffusion_input_key == 'vg'
             # Sample t & noisy action at t
             noise, t_tensor, noisy_action = self.add_noise(cur_action)
-            uncond_mask = torch.rand(diffusion_obs.shape[0], device=diffusion_obs.device) < self.cfg_prob
+            """ Use a different null embedding for each modality """
+            context_masked = context.clone()
+            # proprio_obs_masked = proprio_obs.clone()
+            # vl_semantics_masked = vl_semantics.clone()
+            fused_goal_masked = fused_goal.clone()
 
-            # 1) Use masking (unconditioning) for all obs
-            # diffusion_obs[uncond_mask] = self.uncond_embedding
-            # noise_pred = self.forward_features(diffusion_obs, t_tensor, noisy_action)
-            # 2) Use masking (unconditioning) for certain obs
-            diffusion_obs[uncond_mask] = self.uncond_embedding
-            obs = torch.cat([proprio_obs, diffusion_obs], dim=-1)
+            context_mask = torch.rand(B, device=context.device) < self.cfg_prob
+            # proprio_mask = torch.rand(B, device=proprio_obs.device) < self.cfg_prob
+            # vl_mask = torch.rand(B, device=vl_semantics.device) < self.cfg_prob
+            goal_mask = torch.rand(B, device=fused_goal.device) < self.cfg_prob
+
+            # Flag to indicate which modality is masked to model / flag = 0 if null
+            # mode_flags = torch.stack([~context_mask, ~goal_mask], dim=1).float()
+            # mode_flags = torch.stack([~context_mask, ~vl_mask, ~goal_mask], dim=1).float()
+
+            context_masked[context_mask] = self.uncond_embedding['c']
+            # proprio_obs_masked[proprio_mask] = self.uncond_embedding['p']
+            # vl_semantics_masked[vl_mask] = self.uncond_embedding['v']
+            fused_goal_masked[goal_mask] = self.uncond_embedding['g']
+
+            # obs = torch.cat([context_masked, vl_semantics_masked, fused_goal_masked, mode_flags], dim=-1)
+            obs = torch.cat([context_masked, fused_goal_masked], dim=-1)
+            # obs = context_masked
+
+            """ COMMON """
             noise_pred = self.forward_features(obs, t_tensor, noisy_action)
-
             diffusion_loss = F.mse_loss(noise_pred, noise)
             return diffusion_loss
         elif self.mode == 'energy':
-            assert self.energy_input_key == 'pvg' and self.diffusion_input_key == 'p'
+            assert self.energy_input_key == 'pvg'
+            pvg_obs = torch.cat([proprio_obs, vl_semantics, fused_goal], dim=-1)
             energy_obs = torch.cat([modality_dict[key] for key in self.energy_input_key], dim=-1)
-            student_policy = self.policy_dict['student']
             expert_policy = self.policy_dict['expert']
+            if 'student' in self.policy_dict.keys():
+                student_policy = self.policy_dict['student']
             # Vectorize obs for generating samples
-            proprio_obs_ = proprio_obs.repeat_interleave(S, dim=0)
+            if expert_policy.head.mode == 'cfg':
+                uncond_obs = torch.cat([proprio_obs, expert_policy.head.uncond_embedding.repeat(diffusion_obs.shape[0], 1)], dim=-1)
+                student_obs = uncond_obs.repeat_interleave(S, dim=0)
+            else:
+                student_obs = proprio_obs.repeat_interleave(S, dim=0)
             # Store predictions for each step
             t_buffer = torch.zeros(T, B, 1, device=diffusion_obs.device)
             # action_ref_buffer = torch.zeros(T, B, A, device=diffusion_obs.device)
@@ -191,7 +231,11 @@ class DDPMHead(nn.Module):
                     action_t_expert = expert_policy.head.denoise(action_t_expert, t_tensor, noise_ref)
                     # --- 2. Generate Predicted Actions (Negative Samples) - VECTORIZED ---
                     t_tensor_ = t_tensor.repeat_interleave(S, dim=0)
-                    noise_pred = student_policy.head.forward_features(proprio_obs_, t_tensor_, action_t_student)
+                    if 'student' in self.policy_dict.keys():
+                        noise_pred = student_policy.head.forward_features(student_obs, t_tensor_, action_t_student)
+                    else:
+                        # If CFG, noise_pred = unconditional model
+                        noise_pred = expert_policy.head.forward_features(student_obs, t_tensor_, action_t_student)
                     # action_t_student = student_policy.head.denoise(action_t_student, t_tensor_, noise_pred)
                     # Save to buffer
                     t_buffer[t] = t_tensor
@@ -201,26 +245,14 @@ class DDPMHead(nn.Module):
                     # action_buffer[t] = action_t_student.view(B, S, A)
             # TODO Appropriate inputs for energy loss
             loss = self.loss_energy(energy_obs, t_buffer, noise_ref_buffer, noise_buffer)
+            # (Optional) Compare with expert policy
+            # noise_pred = expert_policy.head.forward_features(pvg_obs, t_tensor, action_expert)
+            # action_expert = expert_policy.head.denoise(action_expert, t_tensor, noise_pred)
+            # error = F.mse_loss(action_t, action_expert)
+            # error_expert.append(error.item())
             return loss
         else:
             raise NotImplementedError
-
-    def add_noise(self, x0: torch.Tensor):
-        """
-        sample noisy xt from x0, q(xt|x0), forward process
-
-        Input:
-            x0: ground truth action / t: timestep / noise: noise
-
-        Return:
-            noise, timestep t, noisy action at t
-        """
-        B = x0.shape[0]
-        noise = torch.randn_like(x0, device=x0.device)
-        t = torch.randint(0, self.num_timesteps, (B,), device=x0.device)
-        alphas_cumprod_t = self.alphas_cumprod[t]
-        xt = x0 * extract(torch.sqrt(alphas_cumprod_t), x0.shape) + noise * extract(torch.sqrt(1 - alphas_cumprod_t), x0.shape)
-        return noise, t, xt
 
     def loss_energy(self, energy_obs, t_buffer, noise_ref_buffer, noise_buffer):
         """
@@ -292,18 +324,31 @@ class DDPMHead(nn.Module):
         for target_param, param in zip(self.q1_target.parameters(), self.q1_network.parameters()):
             target_param.data.copy_(self.tau * param.data + (1.0 - self.tau) * target_param.data)
 
+    def add_noise(self, x0: torch.Tensor):
+        """
+        sample noisy xt from x0, q(xt|x0), forward process
+
+        Input:
+            x0: ground truth action / t: timestep / noise: noise
+
+        Return:
+            noise, timestep t, noisy action at t
+        """
+        B = x0.shape[0]
+        noise = torch.randn_like(x0, device=x0.device)
+        t = torch.randint(0, self.num_timesteps, (B,), device=x0.device)
+        alphas_cumprod_t = self.alphas_cumprod[t]
+        xt = x0 * extract(torch.sqrt(alphas_cumprod_t), x0.shape) + noise * extract(torch.sqrt(1 - alphas_cumprod_t), x0.shape)
+        return noise, t, xt
+
     @torch.no_grad()
     def generate(self, all_obs):
-        vl_semantics, proprio_obs, fused_goal = all_obs
-        modality_dict = {'v': vl_semantics, 'p': proprio_obs, 'g': fused_goal, }
+        vl_semantics, proprio_obs, fused_goal, context = all_obs
+        modality_dict = {'c': context, 'v': vl_semantics, 'p': proprio_obs, 'g': fused_goal, }
         diffusion_obs = torch.cat([modality_dict[key] for key in self.diffusion_input_key], dim=-1)
-        # pvg_obs = torch.cat([vl_semantics, proprio_obs, fused_goal], dim=-1)
-
-        shape = (diffusion_obs.shape[0], self.action_size)
-        student_policy = self.policy_dict['student']
-        # expert_policy = self.policy_dict['expert']
-
+        B = diffusion_obs.shape[0]
         # Sample noise action
+        shape = (diffusion_obs.shape[0], self.action_size)
         action_t = torch.randn(shape, device=diffusion_obs.device)
         # action_expert = action_t.clone()
         # error_expert = []
@@ -313,33 +358,59 @@ class DDPMHead(nn.Module):
                 noise_pred = self.forward_features(diffusion_obs, t_tensor, action_t)
                 action_t = self.denoise(action_t, t_tensor, noise_pred)
             elif self.mode == 'cfg':
-                """0) all_obs"""
-                uncond_shape = diffusion_obs.shape[0]
-                uncond_obs = self.uncond_embedding.repeat(uncond_shape, 1)
-                cond_obs = diffusion_obs.clone()
-                """1) vl_semantics"""
-                # uncond_shape = vl_semantics.shape[0]
-                # uncond_obs = torch.cat([self.uncond_embedding.repeat(uncond_shape, 1), proprio_obs, fused_goal], dim=-1)
-                # cond_obs = torch.cat([vl_semantics, proprio_obs, fused_goal], dim=-1)
-                """2) vl_semantics + fused goal"""
-                # uncond_shape = torch.cat([vl_semantics, fused_goal], dim=-1).shape[0]
-                # uncond_obs = torch.cat([self.uncond_embedding.repeat(uncond_shape, 1), proprio_obs], dim=-1)
-                # cond_obs = torch.cat([vl_semantics, fused_goal, proprio_obs], dim=-1)
-                """Common"""
-                noise_pred_uncond = self.forward_features(uncond_obs, t_tensor, action_t)
-                noise_pred_cond = self.forward_features(cond_obs, t_tensor, action_t)
-                noise_pred = noise_pred_uncond + self.w_cfg * (noise_pred_cond - noise_pred_uncond)
+                # if self.diffusion_input_key == 'vg':
+                #     uncond_obs = torch.cat([proprio_obs, self.uncond_embedding['v'].repeat(B, 1), self.uncond_embedding['g'].repeat(B, 1)], dim=-1)
+                # elif self.diffusion_input_key == 'p':
+                #     uncond_obs = torch.cat([self.uncond_embedding['p'], vl_semantics, fused_goal], dim=-1)
+                # else:
+                #     uncond_obs = diffusion_obs
+                # cond_obs = torch.cat([proprio_obs, vl_semantics, fused_goal], dim=-1)
+                # noise_uncond = self.forward_features(uncond_obs, t_tensor, action_t)
+                # noise_cond = self.forward_features(cond_obs, t_tensor, action_t)
+                # noise_pred = noise_uncond + self.w_cfg * (noise_cond - noise_uncond)
+                # on_flag = torch.ones(B, 1, device=vl_semantics.device)
+                # off_flag = torch.zeros(B, 1, device=vl_semantics.device)
+                # oo_flag = torch.cat([on_flag, on_flag], dim=-1)
+                # ooo_flag = torch.cat([on_flag, on_flag, on_flag], dim=-1)
+                # oxx_flag = torch.cat([on_flag, off_flag, off_flag], dim=-1)
+                # xoo_flag = torch.cat([off_flag, on_flag, on_flag], dim=-1)
+                # xxx_flag = torch.cat([off_flag, off_flag, off_flag], dim=-1)
+
+                # prop_obs = torch.cat([proprio_obs, self.uncond_embedding['v'].repeat(B, 1), self.uncond_embedding['g'].repeat(B, 1), oxx_flag],dim=-1)
+                # c_obs = torch.cat([context, self.uncond_embedding['v'].repeat(B, 1), self.uncond_embedding['g'].repeat(B, 1), oxx_flag], dim=-1)
+                # vg_obs = torch.cat([self.uncond_embedding['c'].repeat(B, 1), vl_semantics, fused_goal, xoo_flag], dim=-1)
+                # null_obs = torch.cat([self.uncond_embedding['c'].repeat(B, 1), self.uncond_embedding['v'].repeat(B, 1), self.uncond_embedding['g'].repeat(B, 1), xxx_flag], dim=-1)
+                # diffusion_obs = torch.cat([diffusion_obs, oo_flag], dim=-1)
+
+                # noise_c = self.forward_features(c_obs, t_tensor, action_t)
+                # noise_p = self.forward_features(prop_obs, t_tensor, action_t)
+                # noise_vg = self.forward_features(vg_obs, t_tensor, action_t)
+                # noise_null = self.forward_features(null_obs, t_tensor, action_t)
+                noise = self.forward_features(diffusion_obs, t_tensor, action_t)
+
+                # noise_pred = noise_p + noise_vg - noise_null
+                # noise_pred = noise_c + noise_vg - noise_null
+                noise_pred = noise
+
                 action_t = self.denoise(action_t, t_tensor, noise_pred)
             elif self.mode == 'energy':
-                assert self.energy_input_key == 'pvg' and self.diffusion_input_key == 'p'
+                assert self.energy_input_key == 'pvg'
+                diffusion_policy = self.policy_dict['student'] if 'student' in self.policy_dict.keys() else self.policy_dict['expert']
+                if diffusion_policy.head.mode == 'cfg':
+                    diffusion_obs = torch.cat([proprio_obs, diffusion_policy.head.uncond_embedding.repeat(diffusion_obs.shape[0], 1)], dim=-1)
+                else:
+                    diffusion_obs = proprio_obs
+                # pvg_obs = torch.cat([vl_semantics, proprio_obs, fused_goal], dim=-1)
                 energy_obs = torch.cat([modality_dict[key] for key in self.energy_input_key], dim=-1)
-                # Diffusion denoising with proprio conditioning
-                noise_t = student_policy.head.forward_features(diffusion_obs, t_tensor, action_t)
+                # Denoise with diffusion policy
+                noise_t = diffusion_policy.head.forward_features(diffusion_obs, t_tensor, action_t)
                 # Energy guidance
-                energy_grad = self.energy_guidance(noise_t, t_tensor, energy_obs)[0]
+                energy_grad = self.energy_guidance(action_t, t_tensor, energy_obs)[0]
                 scale_factor = extract(self.sqrt_one_minus_alphas_cumprod[t_tensor], energy_grad.shape)
-                noise_t = noise_t - self.guidance_scale * scale_factor * energy_grad
-                action_t = student_policy.head.denoise(action_t, t_tensor, noise_t)
+                # # Apply guidance to predicted noise
+                noise_t = noise_t - scale_factor * energy_grad
+                # Estimate action from guided noise
+                action_t = self.denoise(action_t, t_tensor, noise_t)
                 # (Optional) Compare with expert policy
                 # noise_pred = expert_policy.head.forward_features(pvg_obs, t_tensor, action_expert)
                 # action_expert = expert_policy.head.denoise(action_expert, t_tensor, noise_pred)
@@ -348,23 +419,22 @@ class DDPMHead(nn.Module):
         action_t = action_t.clamp(-1., 1.)
         return action_t
 
-    def energy_guidance(self, noise, t, condition):
+    def energy_guidance(self, noise_t, t, condition):
         """
         Calculates the guidance term for the noise prediction based on the score function.
         Returns: w * sqrt(1 - alpha_bar_t) * grad(Q(x_t)).
         """
         with torch.enable_grad():
-            noise_ = noise.detach().clone().requires_grad_(True)
+            noise = noise_t.detach().clone().requires_grad_(True)
 
             t_emb = self.time_encoder(self.time_process(t.float()))
-            q_input = torch.cat([condition, t_emb, noise_], dim=-1)
+            q_input = torch.cat([condition, t_emb, noise], dim=-1)
 
             q0_values = self.q0_network(q_input)
             q1_values = self.q1_network(q_input)
             q_values = torch.min(q0_values, q1_values)
-            energy = -q_values
 
-            grad = torch.autograd.grad(outputs=energy.sum(), inputs=noise_)
+            grad = torch.autograd.grad(outputs=q_values.sum(), inputs=noise)
         # sqrt_one_minus_alpha_bar_t = self.sqrt_one_minus_alphas_cumprod[t.view(-1)].view(-1, 1)
         # guidance = self.guidance_scale * sqrt_one_minus_alpha_bar_t * grad
 
@@ -481,4 +551,3 @@ class BaseHead(nn.Module):
     def generate(self, all_obs):
         action = self.model(all_obs)
         return action
-

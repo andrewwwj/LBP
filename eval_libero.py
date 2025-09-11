@@ -30,6 +30,12 @@ def main():
         with open(json_file, 'r') as f:
             config = json.load(f)
         config['dataset_path'] = args.dataset_path if args.dataset_path else config['dataset_path']
+        config['w_cfg'] = args.w_cfg
+        
+        # Ensure history_length to be 2
+        history_length = config.get('history_length', 2)
+        config['history_length'] = history_length
+
         model = create_model(**config)
         ckpt_file = os.path.join(ckpt_path, file)
         state_dict = torch.load(ckpt_file, map_location='cpu')
@@ -51,5 +57,6 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_path', type=str)
     parser.add_argument('--ckpt_path', type=str, required=True, help='Path to the checkpoint directory containing model and config.')
     parser.add_argument('--task_name', nargs='+', help='List of task suites to evaluate on.')
+    parser.add_argument('--w_cfg', type=float, default=1.0)
     args = parser.parse_args()
     main()

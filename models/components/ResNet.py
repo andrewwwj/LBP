@@ -202,16 +202,20 @@ class FilmResNet(nn.Module):
             feature_depth = info['num_blocks']
             self.film_layer.extend([FiLM_layer(cond_dim, feature_dim) for _ in range(feature_depth)])
     
-    def forward(self, image, condition):
+    def forward(self, image, condition, img_diff=None):
         # image B C H W
         # condition B D
-
         image_feature = self.backbone.forward_stem(image)
+        motion_feature = self.backbone.forward_stem(img_diff) if img_diff is not None else None
         
         visual_blocks = self.backbone.get_visual_blocks()
         for visual_block, film_layer in zip(visual_blocks, self.film_layer):
             image_feature = visual_block(image_feature)
             image_feature = film_layer(condition, image_feature)
+            if img_diff is not None:
+                motion_feature = visual_block(motion_feature)
+                motion_feature = film_layer(condition, motion_feature)
 
         image_feature = self.backbone.forward_head(image_feature)
-        return image_feature
+        motion_feature = self.backbone.forward_head(motion_feature) if img_diff is not None else None
+        return image_feature, motion_feature
