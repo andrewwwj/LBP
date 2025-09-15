@@ -6,7 +6,6 @@ from .components.ResNet import FilmResNet
 from .components.MlpResNet import FilmMLP
 from .components.ActionHead import BaseHead, DDPMHead
 from .components.CrossAttn import CrossAttnBlock
-from .components.MetaTask import IKContextExtractor
 from .MidPlanner import mid_planner_dnce_noise
 
 class LBPPolicy(nn.Module):
@@ -45,9 +44,9 @@ class LBPPolicy(nn.Module):
         self.imaginator.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else self.imaginator
         self.imaginator.requires_grad_(False)  # Freeze pre-trained planner
         # Re-enable training for learnable noise parameters only
-        if hasattr(self.imaginator, 'latent_proj') and hasattr(self.imaginator.latent_proj, 'noise_patch_small'):
-            self.imaginator.latent_proj.noise_patch_small.requires_grad_(True)
-            self.imaginator.latent_proj.noise_scale.requires_grad_(True)
+        # if hasattr(self.imaginator, 'latent_proj') and hasattr(self.imaginator.latent_proj, 'noise_patch_small'):
+        #     self.imaginator.latent_proj.noise_patch_small.requires_grad_(True)
+        #     self.imaginator.latent_proj.noise_scale.requires_grad_(True)
         self.recursive_step = recursive_step
         self.num_views = num_views  # image views
         self.context_dim = context_dim
@@ -76,22 +75,10 @@ class LBPPolicy(nn.Module):
         self.goal_fusion = CrossAttnBlock(embed_dim=self.latent_dim, num_layers=num_attn_layers)
 
         # Vision
-        # self.noise_patches = nn.Parameter(torch.zeros(1, C, H, W))  # 입력 해상도에 맞추어 등록
-        # self.noise_scale = nn.Parameter(torch.tensor(0.1))
-        # self.vision_encoder = FilmResNet(image_dim=3, cond_dim=self.latent_dim, backbone_name=vision_backbone_name)
         self.vision_dim = 512 * self.num_views  # self.vision_encoder.vision_dim * self.num_views
 
         # Proprio
         self.proprio_dim = proprio_input_dim
-        # self.proprio_encoder = FilmMLP(input_dim=proprio_input_dim, cond_dim=self.latent_dim, output_size=self.vision_encoder.vision_dim)
-
-        # Context
-        self.task_context_extractor = IKContextExtractor(
-            proprio_dim=self.proprio_dim,
-            vision_dim=self.vision_dim,
-            action_dim=self.action_size * self.chunk_length,
-            out_dim=self.context_dim,
-        )
 
         # action decoder
         self.decoder_head = decoder_head
@@ -129,81 +116,38 @@ class LBPPolicy(nn.Module):
         # prev_action = prev_action_chunk[:, :self.action_size]
         ep_iter = kwargs['ep_iter']
         progress = ep_iter / self.num_iters
-        if progress < 0.3:
-            context_weight = 1.0
-            diffusion_weight = 0.001
-            curriculum_stage = 1
-        else:
-            context_weight = 1.0
-            diffusion_weight = 1.0
-            curriculum_stage = 2
-
-        # B, T, V, C, H, W = image_history.shape
-        # prev_img, curr_img = image_history[:, 0], image_history[:, -1]
-        # p_prev, p_curr = proprio_history[:, 0], proprio_history[:, -1]
-        # delta_v = curr_img - prev_img
-        # delta_p = p_curr - p_prev
 
         # planned_subogals, details = self.imaginator.generate(cur_images, instruction, self.recursive_step)
         planned_subogals, details = self.imaginator.generate(image_history, instruction, self.recursive_step)
-        lang_emb = details['lang_latent']  # s_g
         img_emb = details['img_latent']  # s_0
-        img_emb_history = details['img_emb_history']  # [s_0, s_1]
         fused_goal = self.goal_fusion(img_emb.unsqueeze(1), planned_subogals).squeeze(1)
 
-        # delta_v = rearrange(delta_v, 'b v c h w -> (b v) c h w')
-        # curr_img = rearrange(curr_img, 'b v c h w -> (b v) c h w')
-        # lang_emb_rep = repeat(lang_emb, 'b d -> (b v) d', v=V)
-        # vl_emb = rearrange(vl_emb, '(b v) d -> b (v d)', b=B, v=V)
-        # p_emb = repeat(p_emb, 'b d -> b (r d)', b=B, r=V)
-        # motion_feature = rearrange(motion_feature, '(b v) d -> b (v d)', b=B, v=V)
-        # prev_action = repeat(prev_action, 'b d -> (b r) d', r=B // kwargs['prev_action'].shape[0])
-
-        context, vl_emb, context_loss = self.task_context_extractor(
-            img_history=img_emb_history,
-            proprio_history=proprio_history,
-            lang_emb=lang_emb,
-            prev_action=prev_action_chunk,
-        )
+        # Use DNCE image latent as visual feature; context is a zero placeholder
+        vl_emb = img_emb
+        context = torch.zeros(vl_emb.shape[0], self.context_dim, device=vl_emb.device, dtype=vl_emb.dtype)
         all_obs = (vl_emb, cur_proprios, fused_goal, context)
-
         diffusion_loss = self.head(all_obs, cur_actions)
+        total_loss = diffusion_loss
 
-        total_loss = diffusion_weight * diffusion_loss + context_weight * context_loss
-        # total_loss = diffusion_loss
+        return total_loss, dict(loss=total_loss, diffusion_loss=diffusion_loss)
 
-        return total_loss, dict(loss=total_loss, diffusion_loss=diffusion_loss, context_loss=context_loss, )
-
-    def generate(self, cur_images, cur_proprios, instruction, **kwargs):
+    def generate(self, cur_images, cur_proprios, **kwargs):
         # all_obs = self.forward_cond(cur_images, cur_proprios, instruction)
         # pred_actions = self.generate_head(all_obs)
         # return pred_actions, dict(actions=pred_actions)
+        instruction = kwargs["instruction"]
         image_history = kwargs['images_history']
         proprio_history = kwargs['proprios_history']
-        prev_action_chunk = kwargs['prev_action']
-        prev_action = prev_action_chunk[:, :self.action_size]
+        # prev_action = prev_action_chunk[:, :self.action_size]
 
-        planned_subogals, details = self.imaginator.generate(cur_images, instruction, self.recursive_step)
-        lang_emb = details['lang_latent']  # s_g
+        planned_subogals, details = self.imaginator.generate(image_history, instruction, self.recursive_step)
         cur_query = details['img_latent']  # s_0
         fused_goal = self.goal_fusion(cur_query.unsqueeze(1), planned_subogals).squeeze(1)
 
-        # B, T, V, C, H, W = image_history.shape
-        # lang_emb = repeat(lang_emb, 'b d -> (b v) d', v=V)  # Prepare for broadcasting
-        # vl_emb, motion_feature = self.vision_encoder(curr_img, lang_emb, img_diff)
-        # vl_emb = rearrange(vl_emb, '(b v) d -> b (v d)', b=B, v=V)
-        # motion_feature = rearrange(motion_feature, '(b v) d -> b (v d)', b=B, v=V)
-        # prev_action = repeat(prev_action, 'b d -> (b r) d', r=B // kwargs['prev_action'].shape[0])
+        # Use DNCE image latent as visual feature; context is a zero placeholder
+        vl_emb = cur_query
 
-        # In inference, we don't need the loss
-        context, vl_emb, _ = self.task_context_extractor(
-            img_history=image_history,
-            proprio_history=proprio_history,
-            lang_emb=lang_emb,
-            prev_action=prev_action,
-        )
-
-        all_obs = (vl_emb, cur_proprios, fused_goal, context)
+        all_obs = (vl_emb, cur_proprios, fused_goal)
         pred_actions = self.head.generate(all_obs)
 
         return pred_actions, dict(actions=pred_actions)

@@ -15,7 +15,7 @@ DATA_PATH="/home/andrew/pyprojects/datasets/libero_10"
 #CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/exp1/08-31_energy_guided_planner_bs64_seed3407"  # energy w/ p anchor + vg energy
 # CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/exp3/09-03_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407"  # CFG w/ randn embedding
 #CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/cfg_mask_vg/08-31_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407"  # CFG w/ mask vg only
-CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/exp2/09-11_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407"
+CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/exp2/09-13_lbp_policy_ddpm_res34_libero_hor2_bs128_seed3407"
 
 echo "Start Evaluation..."
 echo

@@ -100,9 +100,9 @@ class DDPMHead(nn.Module):
             # }
             # 2) Null embedding = learnable embedding w/ randn initialization
             self.uncond_embedding = nn.ParameterDict({
-                'c': nn.Parameter(torch.randn(1, context_dim)),
+                # 'c': nn.Parameter(torch.randn(1, context_dim)),
                 # 'p': nn.Parameter(torch.randn(1, proprio_dim)),
-                # 'v': nn.Parameter(torch.randn(1, vis_lang_dim)),
+                'v': nn.Parameter(torch.randn(1, vis_lang_dim)),
                 'g': nn.Parameter(torch.randn(1, latent_goal_dim))
             })
         elif self.mode == 'energy':
@@ -158,7 +158,7 @@ class DDPMHead(nn.Module):
         noise_pred = self.model(input_feature)
         return noise_pred
 
-    def forward(self, all_obs, cur_action):
+    def forward(self, all_obs, cur_action, progress=None):
         vl_semantics, proprio_obs, fused_goal, context = all_obs
         modality_dict = {'c': context, 'v': vl_semantics, 'p': proprio_obs, 'g': fused_goal, }
         diffusion_obs = torch.cat([modality_dict[key] for key in self.diffusion_input_key], dim=-1)
@@ -173,27 +173,27 @@ class DDPMHead(nn.Module):
             # Sample t & noisy action at t
             noise, t_tensor, noisy_action = self.add_noise(cur_action)
             """ Use a different null embedding for each modality """
-            context_masked = context.clone()
+            # context_masked = context if not progress else self.uncond_embedding['c'].repeat(B, 1)
             # proprio_obs_masked = proprio_obs.clone()
-            # vl_semantics_masked = vl_semantics.clone()
+            vl_semantics_masked = vl_semantics.clone()
             fused_goal_masked = fused_goal.clone()
 
-            context_mask = torch.rand(B, device=context.device) < self.cfg_prob
+            # context_mask = torch.rand(B, device=context.device) < self.cfg_prob
             # proprio_mask = torch.rand(B, device=proprio_obs.device) < self.cfg_prob
-            # vl_mask = torch.rand(B, device=vl_semantics.device) < self.cfg_prob
+            vl_mask = torch.rand(B, device=vl_semantics.device) < self.cfg_prob
             goal_mask = torch.rand(B, device=fused_goal.device) < self.cfg_prob
 
             # Flag to indicate which modality is masked to model / flag = 0 if null
             # mode_flags = torch.stack([~context_mask, ~goal_mask], dim=1).float()
             # mode_flags = torch.stack([~context_mask, ~vl_mask, ~goal_mask], dim=1).float()
 
-            context_masked[context_mask] = self.uncond_embedding['c']
+            # context_masked[context_mask] = self.uncond_embedding['c']
             # proprio_obs_masked[proprio_mask] = self.uncond_embedding['p']
-            # vl_semantics_masked[vl_mask] = self.uncond_embedding['v']
+            vl_semantics_masked[vl_mask] = self.uncond_embedding['v']
             fused_goal_masked[goal_mask] = self.uncond_embedding['g']
 
             # obs = torch.cat([context_masked, vl_semantics_masked, fused_goal_masked, mode_flags], dim=-1)
-            obs = torch.cat([context_masked, fused_goal_masked], dim=-1)
+            obs = torch.cat([context, vl_semantics_masked, fused_goal_masked], dim=-1)
             # obs = context_masked
 
             """ COMMON """

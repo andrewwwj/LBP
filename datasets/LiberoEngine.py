@@ -151,7 +151,7 @@ class LiberoDataset(Dataset):
         history_indices = [max(0, cur_idx - i * self.chunk_length) for i in range(self.history_length - 1, -1, -1)]
 
         # Load images with history from all views
-        raw_images_history = []
+        raw_image_history = []
         observations = f['observation']
         for hist_idx in history_indices:
             view_images = []
@@ -163,7 +163,7 @@ class LiberoDataset(Dataset):
                 # img_rgb = cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB)
                 # plt.figure(figsize=(8, 8))
                 # plt.imshow(img_rgb); plt.axis('off'); plt.show()
-            raw_images_history.append(view_images)
+            raw_image_history.append(view_images)
 
         # Current frame is the last in history
         # raw_images = raw_images_history[-1]
@@ -192,10 +192,17 @@ class LiberoDataset(Dataset):
         # Load proprioceptive history
         raw_proprio_history = [f['proprio'][()][hist_idx] for hist_idx in history_indices]
 
+        # Next proprio/image index
+        T_total = f['proprio'].shape[0]
+        next_idx = min(cur_idx + self.chunk_length, T_total - 1)
+        raw_next_proprio = f['proprio'][next_idx]
+        raw_next_image = [cv2.imdecode(observations[view][next_idx], cv2.IMREAD_COLOR) for view in self.views]
+
         # Load instruction (same for all timesteps)
         instruction = f['language_instruction'][()].decode('utf-8')
 
-        return raw_images_history, subgoals, cur_action, prev_action, raw_proprio_history, instruction
+        return (raw_image_history, raw_next_image, raw_proprio_history, raw_next_proprio,
+                subgoals, cur_action, prev_action, instruction)
 
     def __len__(self):
         return len(self.metas)
@@ -204,14 +211,15 @@ class LiberoDataset(Dataset):
         meta = self.metas[index]
         traj_path, cur_idx, goal_idx = meta[0], meta[1], meta[2]
         f = self.traj_files[traj_path]
-        raw_images_history, subgoals, cur_action, prev_action, raw_proprio_history, instruction = self._load_from_raw_traj(f, cur_idx, goal_idx)
+        (raw_image_history, raw_next_image, raw_proprio_history, raw_next_proprio,
+         subgoals, cur_action, prev_action, instruction) = self._load_from_raw_traj(f, cur_idx, goal_idx)
 
         # First, determine the augmentation parameters from the main view of the current frame
-        _, replay_params = self.processor.preprocess_image(raw_images_history[-1][0])
+        _, replay_params = self.processor.preprocess_image(raw_image_history[-1][0])
 
         # Apply consistent augmentation to all historical frames and views
         processed_images_history = []
-        for raw_images in raw_images_history:
+        for raw_images in raw_image_history:
             # Apply the same replay_params to all views in a single timestep
             final_images = [self.processor.preprocess_image(img, replay_params)[0] for img in raw_images]
             processed_images_history.append(torch.stack(final_images))
@@ -230,15 +238,21 @@ class LiberoDataset(Dataset):
         # Process proprioceptive history
         final_proprio_history = torch.stack([self.processor.preprocess_proprio(prop) for prop in raw_proprio_history])
 
+        # Process next images/proprio with same params
+        final_next_images = torch.stack([self.processor.preprocess_image(img, replay_params)[0] for img in raw_next_image])
+        final_next_proprio = self.processor.preprocess_proprio(raw_next_proprio)
+
         item = {
-            'cur_images': final_images_history[-1],          # Current images [num_views, C, H, W]
-            'cur_proprios': final_proprio_history[-1],       # Current proprio [proprio_size]
+            'cur_images': final_images_history[-1],          # Current images [V, C, H, W]
+            'cur_proprios': final_proprio_history[-1],       # Current proprio [P]
             'cur_actions': cur_action,                       # [chunk_length * action_size]
             'prev_action': prev_action,                      # [history_length, action_size]
             'sub_goals': subgoals,                           # [recursive_step, C, H, W]
             'instruction': instruction,                      # str
-            'images_history': final_images_history,          # [history_length, num_views, C, H, W]
-            'proprios_history': final_proprio_history,       # [history_length, proprio_size]
+            'images_history': final_images_history,          # [history_length, V, C, H, W]
+            'proprios_history': final_proprio_history,       # [history_length, P]
+            'next_images': final_next_images,                # [V, C, H, W]
+            'next_proprio': final_next_proprio,              # [P]
             'traj_path': meta[0],
             'cur_idx': meta[1],
         }
@@ -337,7 +351,7 @@ class LiberoAgent(object):
         images_history = []
         for agent_hist, wrist_hist in zip(agent_view_history_processed, wrist_view_history_processed):
             images_history.append(torch.cat([agent_hist, wrist_hist], dim=1))
-        images_history = torch.stack(images_history, dim=1)  # [B, history_length, num_views, C, H, W]
+        images_history = torch.stack(images_history, dim=1)  # [B, T, V, C, H, W]
         proprios_history = torch.stack(proprio_history_processed, dim=1)  # [B, history_length, proprio_dim]
 
         batch = {

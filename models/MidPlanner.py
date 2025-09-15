@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import DecisionNCE
 import random
 import pickle
+from .components.MetaTask import IKContextExtractor
 
 
 def init_weight(m):
@@ -67,22 +68,25 @@ class DnceLatentProj(nn.Module):
 
         self.register_buffer('img_mean', img_mean)
         self.register_buffer('img_std', img_std)
-
         #TODO Introduce learnable noise on image
         # Learnable, spatially structured noise to reduce over-reliance on semantics
         # Small patch is upsampled to input HxW on the fly
 
-        # self.noise_patch_small = nn.Parameter(torch.zeros(1, 3, 16, 16))
-        # self.noise_scale = nn.Parameter(torch.tensor(0.05))
-        # self.noise_prob = 0.3  # probability to apply noise during training
+        self.noise_patch = nn.Parameter(torch.zeros(1, 3, 16, 16))
+        self.noise_scale = nn.Parameter(torch.tensor(0.05))
+        self.noise_prob = 0.3  # probability to apply noise during training
+
+    @torch.compiler.disable
+    def add_learnable_noise(self, x):
+        # TODO Introduce learnable noise on image
+        if self.training:
+            if torch.rand(1, device=x.device) < self.noise_prob:
+                patch = F.interpolate(self.noise_patch, size=x.shape[-2:], mode='bilinear', align_corners=False)
+                x = x + self.noise_scale * patch
+        return x
 
     def img_proj(self, x):
-        # x: [B, C, H, W]
-        # TODO Introduce learnable noise on image
-        # if self.training and x.dim() == 4 and x.shape[1] in (1, 3):
-        #     if torch.rand(()) < self.noise_prob:
-        #         patch = F.interpolate(self.noise_patch_small, size=x.shape[-2:], mode='bilinear', align_corners=False)
-        #         x = x + self.noise_scale * patch
+        # x = self.add_learnable_noise(x)
         x = self.latent_proj.model.encode_image(x)
         x = (x - self.img_mean) / self.img_std
         return x
@@ -95,6 +99,7 @@ class DnceLatentProj(nn.Module):
 class MidImaginator(nn.Module):
     def __init__(
             self,
+            action_size=7,
             latent_dim=1024,
             recursive_step=4,
             state_random_noise=True,
@@ -113,9 +118,27 @@ class MidImaginator(nn.Module):
         self.latent_proj = DnceLatentProj(latent_info_file=latent_info_file)
         self.goal_rec = DualPathPredictor(latent_dim=self.latent_dim, output_dim=self.latent_dim)
         self.latent_planner = TriplePathPredictor(latent_dim=latent_dim, output_dim=self.latent_dim)
+        # ---- IK training components ----
+        self.action_size = action_size
+        self.chunk_length = kwargs.get('chunk_length')
+        self.ik_func = IKContextExtractor(
+            proprio_dim=kwargs.get('proprio_dim', 9),
+            vision_dim=self.latent_dim,
+            action_dim=self.action_size * self.chunk_length,
+            hidden_dim=self.latent_dim,
+            num_p_tokens=kwargs.get('num_p_tokens', 4),
+            num_v_tokens=kwargs.get('num_v_tokens', 8),
+            num_a_tokens=kwargs.get('num_a_tokens', 2),
+        )
 
-    def forward(self, cur_images, instruction, sub_goals, **kwargs):
+    def forward(self, cur_images, sub_goals, **kwargs):
         B, G, C, H, W = sub_goals.shape  # subgoals: a series of images during training
+
+        instruction = kwargs["instruction"]
+        images_history = kwargs['images_history']            # [B, T, V, C, H, W]
+        proprios_history = kwargs['proprios_history']        # [B, T, P]
+        prev_action = kwargs['prev_action']                  # [B, A]
+        next_proprio = kwargs['next_proprio']                # [B, P]
 
         s0 = self.latent_proj.img_proj(cur_images[:, 0, ...])
         sg = self.latent_proj.lang_proj(instruction)
@@ -147,9 +170,35 @@ class MidImaginator(nn.Module):
                 pred_subgoal = self.latent_planner(s0, last_subgoal, sg)
             loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_subgoal, target_subgoal)
 
-        loss = sum(loss_dict.values()) / len(loss_dict)
-        loss_dict['loss'] = loss
-        return loss, loss_dict
+        # Base subgoal loss
+        subgoal_loss = sum(loss_dict.values()) / len(loss_dict)
+
+        # ---- IK loss ----
+        _, T, V, C, H, W = images_history.shape
+        img_emb_hist = []
+        for t in range(T):
+            x_t = images_history[:, t, 0, ...]               # main view only
+            z_t = self.latent_proj.img_proj(x_t)             # [B, 1024]
+            img_emb_hist.append(z_t)
+        img_emb_history = torch.stack(img_emb_hist, dim=1)   # [B, T, 1024]
+
+        # IK forward
+        _, ik_loss_dict = self.ik_func(
+            img_history=img_emb_history,
+            proprio_history=proprios_history,
+            next_proprio=next_proprio,
+            lang_emb=sg,
+            prev_action=prev_action,
+        )
+
+        # Add IK losses to loss dictionary
+        loss_dict.update(ik_loss_dict)
+
+        # Combine losses
+        ik_loss = sum(ik_loss_dict.values())
+        total_loss = subgoal_loss + ik_loss
+        loss_dict['loss'] = total_loss
+        return total_loss, loss_dict
 
     def generate(self, images, instruction, recursive_step, **kwargs):
         sg = self.latent_proj.lang_proj(instruction)

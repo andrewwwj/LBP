@@ -1,8 +1,8 @@
 #!/bin/bash
 export MUJOCO_GL="egl"
 
-RUN_PLANNER=0
-RUN_POLICY=1
+RUN_PLANNER=1
+RUN_POLICY=0
 
 # --- Common Configuration ---
 TASK_NAME="libero_10_wo_task8"
@@ -21,7 +21,7 @@ NUM_WORKERS=8
 PIN_MEMORY=True
 NUM_PROCS=1
 AVAILABLE_GPUS="0"
-BS_TOTAL=64
+BS_TOTAL=128
 BS_PER_PROC=$((BS_TOTAL / NUM_PROCS))
 SAVE_INTERVAL=10000
 LEARNING_RATE=3e-4
@@ -33,20 +33,20 @@ IMG_SIZE=224
 ENGINE_NAME="build_libero_engine"
 
 # --- Planner-Specific Configuration ---
-PLANNER_ITER_TOTAL=6400000
+PLANNER_ITER_TOTAL=12800000
 PLANNER_ITER=$((PLANNER_ITER_TOTAL / BS_TOTAL))
 PLANNER_MODEL_NAME="mid_planner_dnce_noise"
 PLANNER_RECURSIVE_STEP=4
 PLANNER_REC_PLAN_COEF=0.5
-#PLANNER_EXP_DIR="${LOG_DIR}/$(date +"%m-%d")_${PLANNER_MODEL_NAME}_hor${PLANNER_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
+PLANNER_EXP_DIR="${LOG_DIR}/$(date +"%m-%d")_${PLANNER_MODEL_NAME}_hor${PLANNER_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
 # -- libero10 --
 #PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/baseline/08-11_mid_planner_dnce_noise_bs64_seed3407"
 # -- libero10-wo-t8 --
-PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/baseline_w_p/08-29_mid_planner_dnce_noise_hor4_bs64_seed3407"
-PLANNER_CKPT_PATH="${PLANNER_EXP_DIR}/Model_ckpt_100000.pth"
+#PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/exp/09-12_mid_planner_dnce_noise_hor4_bs128_seed3407"
+PLANNER_CKPT_PATH="${PLANNER_EXP_DIR}/Model_ckpt_75000.pth"
 
 # --- Policy-Specific Configuration ---
-POLICY_ITER_TOTAL=6400000
+POLICY_ITER_TOTAL=12800000
 POLICY_ITER=$((POLICY_ITER_TOTAL / BS_TOTAL))
 POLICY_MODEL_NAME="lbp_policy_ddpm_res34_libero"
 
@@ -55,7 +55,7 @@ CHUNK_LENGTH=6
 USE_AC=True
 POLICY_GUIDANCE="cfg"
 
-DIFFUSION_INPUT_KEY="cg"
+DIFFUSION_INPUT_KEY="cvg"
 ENERGY_INPUT_KEY="pvg"
 
 POLICY_EXP_DIR="${LOG_DIR}/$(date +"%m-%d")_${POLICY_MODEL_NAME}_hor${POLICY_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
