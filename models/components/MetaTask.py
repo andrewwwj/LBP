@@ -55,12 +55,13 @@ class FourierPositionalEncoding1D(nn.Module):
 
 class IKContextExtractor(nn.Module):
 
-    def __init__(self, proprio_dim, vl_dim, latent_dim, action_dim, num_latents=128,
+    def __init__(self, proprio_dim, vl_dim, latent_dim, action_dim, num_latents=128, action_noise=True,
                  num_heads=8, num_p_tokens=4, num_v_tokens=8,):
         super().__init__()
         self.proprio_dim = proprio_dim
         self.action_dim = action_dim
         self.action_drop_prob = 0.5
+        self.action_noise = action_noise
         self.latent_query = nn.Parameter(torch.randn(1, num_latents, latent_dim))
         self.output_query = nn.Parameter(torch.randn(1, 1, latent_dim))
         self.num_v_tokens = num_v_tokens
@@ -74,43 +75,43 @@ class IKContextExtractor(nn.Module):
         self.proprio_encoder = FilmMLP(input_dim=proprio_dim, cond_dim=vl_dim, output_size=latent_dim)
         self.action_encoder = MlpResNet(num_blocks=3, input_dim=action_dim, hidden_dim=latent_dim, output_size=latent_dim)
 
-        # IK Encoders
-        self.vision_IK = FilmMLP(input_dim=latent_dim, cond_dim=latent_dim, output_size=latent_dim)
-        self.proprio_IK = FilmMLP(input_dim=latent_dim, cond_dim=latent_dim, output_size=latent_dim)
-
         # Tokenizers
         self.vision_tokenizer = nn.Linear(latent_dim, num_v_tokens * latent_dim)
         self.proprio_tokenizer = nn.Linear(latent_dim, num_p_tokens * latent_dim)
+        self.action_tokenizer = nn.Linear(latent_dim, latent_dim)
 
         self.ff_pos_p = FourierPositionalEncoding1D(num_bands=6, out_dim=latent_dim)
         self.ff_pos_v = FourierPositionalEncoding1D(num_bands=6, out_dim=latent_dim)
 
-        self.register_buffer('p_token_pos', torch.linspace(0, 1, steps=num_p_tokens).unsqueeze(0), persistent=False)  # [1, Np]
-        self.register_buffer('v_token_pos', torch.linspace(0, 1, steps=num_v_tokens).unsqueeze(0), persistent=False)  # [1, Nv]
+        self.register_buffer('p_pos', torch.linspace(0, 1, steps=num_p_tokens).unsqueeze(0), persistent=False)  # [1, Np]
+        self.register_buffer('v_pos', torch.linspace(0, 1, steps=num_v_tokens).unsqueeze(0), persistent=False)  # [1, Nv]
         self.mod_embed = nn.Parameter(torch.randn(2, latent_dim))
 
+        # IK solver
+        self.vision_IK = FilmMLP(input_dim=latent_dim, cond_dim=latent_dim, output_size=latent_dim)
+        self.proprio_IK = FilmMLP(input_dim=latent_dim, cond_dim=latent_dim, output_size=latent_dim)
+        # TODO FiLM 성능 안좋으면 cross-attention 시도
+        # self.proprio_IK = CrossAttnBlock(embed_dim=latent_dim,
+        #                                  dim_feedforward=latent_dim * 4,
+        #                                  num_layers=1)
+        # self.vision_IK = CrossAttnBlock(embed_dim=latent_dim,
+        #                                  dim_feedforward=latent_dim * 4,
+        #                                  num_layers=1)
         self.cross_attn = CrossAttnBlock(embed_dim=latent_dim,
-                                         dim_feedforward=latent_dim * 2,
+                                         dim_feedforward=latent_dim * 4,
                                          num_layers=1)
-        # encoder_layer = nn.TransformerEncoderLayer(
-        #     d_model=latent_dim,
-        #     nhead=num_heads,
-        #     dim_feedforward=latent_dim * 2,
-        #     batch_first=True
-        # )
-        # self.self_attn = nn.TransformerEncoder(encoder_layer, num_layers=1)
+        self.out_cross = CrossAttnBlock(embed_dim=latent_dim,
+                                        dim_feedforward=latent_dim * 2,
+                                        num_layers=1)
         self.delta_head = nn.Sequential(
             nn.Linear(latent_dim * 3, latent_dim * 4),
             nn.GELU(),
             nn.LayerNorm(latent_dim * 4),
             nn.Linear(latent_dim * 4, latent_dim)
         )
-        self.out_cross = CrossAttnBlock(embed_dim=latent_dim,
-                                        dim_feedforward=latent_dim * 2,
-                                        num_layers=1)
         self.apply(init_weight)
 
-    def forward(self, img_history, p_history, p_next, lang_emb, prev_action, curr_action=None):
+    def forward(self, img_history, p_history, lang_emb, prev_action, p_next=None, curr_action=None):
         B = p_history.shape[0]
 
         p_prev = p_history[:, 0]    # [B, P]
@@ -127,7 +128,6 @@ class IKContextExtractor(nn.Module):
         delta_pl = pl_curr - pl_prev                       # [B, H]
         delta_vl = vl_curr - vl_prev                       # [B, H]
 
-        a_prev = self.action_encoder(prev_action)  # [B, D]
         # TODO zero 대신 null embedding 입력?
         if curr_action is None:
             curr_action = torch.zeros(B, self.action_dim, device=p_curr.device, dtype=p_curr.dtype)
@@ -138,92 +138,91 @@ class IKContextExtractor(nn.Module):
         #         random_noise = torch.randn_like(curr_action) * 0.01
         #         curr_action = curr_action + random_noise
         a_curr = self.action_encoder(curr_action)  # [B, D]
+        a_prev = self.action_encoder(prev_action)  # [B, D]
 
-        # Apply FiLM IK on deltas conditioned on action
-        pl_ik = self.proprio_IK(delta_pl, a_prev) # [B, H]
-        vl_ik = self.vision_IK(delta_vl, a_prev) # [B, H]
+        p_tokens = self.proprio_tokenizer(delta_pl).view(B, self.num_p_tokens, -1)  # (B, Np, D)
+        v_tokens = self.vision_tokenizer(delta_vl).view(B, self.num_v_tokens, -1)  # (B, Nv, D)
 
-        pl_tokens = self.proprio_tokenizer(pl_ik).view(B, self.num_p_tokens, -1)  # (B, N, D)
-        vl_tokens = self.vision_tokenizer(vl_ik).view(B, self.num_v_tokens, -1)  # (B, M, D)
+        p_pos = self.ff_pos_p(self.p_pos.expand(B, -1))  # [B, Np, H]
+        v_pos = self.ff_pos_v(self.v_pos.expand(B, -1))  # [B, Nv, H]
 
-        p_pos = self.ff_pos_p(self.p_token_pos.expand(B, -1))  # [B, Np, H]
-        v_pos = self.ff_pos_v(self.v_token_pos.expand(B, -1))  # [B, Nv, H]
-        pl_tokens = pl_tokens + p_pos + self.mod_embed[0]
-        vl_tokens = vl_tokens + v_pos + self.mod_embed[1]
+        p_tokens = p_tokens + p_pos + self.mod_embed[0]
+        v_tokens = v_tokens + v_pos + self.mod_embed[1]
+
+        # IK for each modality
+        # TODO FiLM 성능 안좋으면 cross-attention 시도
+        p_ik = self.proprio_IK(p_tokens, a_prev)  # [B, Np, D]
+        v_ik = self.vision_IK(v_tokens, a_prev)  # [B, Nv, D]
 
         # Perceiver-IO: Q = learned latent array; KV = [pl_tokens, vl_tokens]
         # TODO q_latents 와 q_out 의 의미?
         q_latents = repeat(self.latent_query, '1 n d -> b n d', b=B)  # [B, L, H]
-        kv_tokens = torch.cat([pl_tokens, vl_tokens], dim=1)  # [B, N+M, H]
-
-        # latents = self.self_attn(self.cross_attn(q_latents, kv_tokens))  # [B, L, H]
-        latents = self.cross_attn(q_latents, kv_tokens)
         q_out = repeat(self.output_query, '1 p d -> b p d', b=B)     # [B, 1, H]
+        kv_token = torch.cat([p_ik, v_ik], dim=1)  # [B, Np+Nv, D]
+
+        # Extract latent IK
+        latents = self.cross_attn(q_latents, kv_token)
         latent_ik = self.out_cross(q_out, latents).squeeze(1)  # [B, H]
 
         # Predict next Δproprio
-        # TODO Predict latent proprio
+        # t(Δp' | Δp, a) => Δp' = f(t, Δp, a)
         rollout = torch.cat([latent_ik, delta_pl, a_curr], dim=-1)
         next_delta_p = self.delta_head(rollout)
 
         # ---------------- Representation losses ------------------
-        loss_dict = {}
-        # 1-1) InfoNCE between token sets
-        # loss_nce = self._info_nce_set2set(pl_tokens, vl_tokens, tau=self.tau)
-        # loss_nce = self._info_nce(pl_tokens.mean(1), vl_tokens.mean(1), tau=self.tau)
-        # loss_dict['loss_nce'] = loss_nce
-        # 1-2) SimCLR-style contrastive loss on pooled tokens (replaces InfoNCE)
-        loss_simclr = self._simclr_loss(pl_tokens, vl_tokens, tau=self.tau, pool='mean')
-        loss_dict['loss_simclr'] = loss_simclr
+        if self.training:
+            loss_dict = {}
+            # 1-1) InfoNCE between token sets
+            # loss_nce = self._info_nce_set2set(pl_tokens, vl_tokens, tau=self.tau)
+            # loss_dict['loss_nce'] = loss_nce
+            # 1-2) SimCLR-style contrastive loss on pooled tokens (replaces InfoNCE)
+            loss_simclr = self._simclr_loss(p_ik, v_ik, tau=self.tau, pool='mean')
+            loss_dict['loss_simclr'] = loss_simclr
 
-        # 2) Latent alignment: cosine-based (scale-invariant)
-        loss_align = self._cosine_align(pl_ik, vl_ik)
-        loss_dict['loss_align'] = loss_align
+            # 2) Latent alignment: cosine-based (scale-invariant)
+            loss_align = self._cosine_align(p_ik.mean(1), v_ik.mean(1))
+            loss_dict['loss_align'] = loss_align
 
-        # TODO proprio 도 latent 에 투영 비교
-        pl_next = self.proprio_encoder(p_next, lang_emb).detach()
-        delta_gt = pl_next - pl_curr
-        loss_delta = F.mse_loss(next_delta_p, delta_gt)
-        loss_dict['loss_delta_p'] = loss_delta
+            # Delta supervision
+            pl_next = self.proprio_encoder(p_next, lang_emb)
+            delta_gt = pl_next - pl_curr
+            loss_delta = F.smooth_l1_loss(next_delta_p, delta_gt.detach())
+            loss_dict['loss_delta_p'] = loss_delta
 
-        # 3) Δvision reconstruction tethering loss
-        # loss_delta_v = F.mse_loss(delta_v_pred, delta_vl)
-        # losses.append(self.w_vdelta * loss_delta_v)
+            return next_delta_p, loss_dict
 
-        # total_loss = sum(losses)
+        return next_delta_p, None
 
-        return next_delta_p, loss_dict
-
-    def _simclr_loss(self, p_tokens, v_tokens, tau: float = 0.07, pool: str = 'mean'):
+    def _simclr_loss(self, a, b, tau: float = 0.07, pool: str = 'mean'):
         """
         SimCLR-style contrastive loss between proprio and vision token sets.
         - Pools tokens per sample to obtain a single embedding per modality.
         - Builds a 2B x 2B similarity matrix; for each anchor, the positive is
           its paired sample from the other modality.
         Args:
-            p_tokens: [B, K, D]
-            v_tokens: [B, M, D]
+            a: [B, K, D]
+            b: [B, M, D]
             tau: temperature
             pool: 'mean' or 'max'
         Returns:
             scalar loss
         """
-        B = p_tokens.shape[0]
+        B = a.shape[0]
         if pool == 'mean':
-            p = p_tokens.mean(dim=1)  # [B, D]
-            v = v_tokens.mean(dim=1)  # [B, D]
+            a = a.mean(dim=1)  # [B, D]
+            b = b.mean(dim=1)  # [B, D]
         elif pool == 'max':
-            p = p_tokens.max(dim=1).values
-            v = v_tokens.max(dim=1).values
+            a = a.max(dim=1).values
+            b = b.max(dim=1).values
         else:
             raise ValueError(f"Unsupported pool type: {pool}")
 
         # Normalize embeddings
-        p = F.normalize(p, dim=-1)
-        v = F.normalize(v, dim=-1)
+        a = F.normalize(a, dim=-1)
+        b = F.normalize(b, dim=-1)
 
         # Concatenate views to form 2B embeddings
-        z = torch.cat([p, v], dim=0)  # [2B, D]
+        z = torch.cat([a, b], dim=0)  # [2B, D]
         logits = z @ z.t() / tau      # [2B, 2B]
 
         # Mask self-similarity on the diagonal
@@ -237,6 +236,12 @@ class IKContextExtractor(nn.Module):
         loss = F.cross_entropy(logits, pos)
         return loss
 
+    def _cosine_align(self, a, b):
+        """Cosine-based alignment loss: 1 - cosine(a, b), averaged over batch."""
+        a_n = F.normalize(a, dim=-1)
+        b_n = F.normalize(b, dim=-1)
+        return 1.0 - (a_n * b_n).sum(dim=-1).mean()
+
     def _info_nce(self, a, b, tau=0.07):
         a = F.normalize(a, dim=-1)
         b = F.normalize(b, dim=-1)
@@ -244,11 +249,6 @@ class IKContextExtractor(nn.Module):
         labels = torch.arange(a.shape[0], device=a.device)
         return 0.5 * (F.cross_entropy(logits, labels) + F.cross_entropy(logits.t(), labels))
 
-    def _cosine_align(self, a, b):
-        """Cosine-based alignment loss: 1 - cosine(a, b), averaged over batch."""
-        a_n = F.normalize(a, dim=-1)
-        b_n = F.normalize(b, dim=-1)
-        return 1.0 - (a_n * b_n).sum(dim=-1).mean()
 
     def _info_nce_set2set(self, a, b, tau=0.07):
         """

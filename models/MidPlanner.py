@@ -71,7 +71,6 @@ class DnceLatentProj(nn.Module):
         #TODO Introduce learnable noise on image
         # Learnable, spatially structured noise to reduce over-reliance on semantics
         # Small patch is upsampled to input HxW on the fly
-
         self.noise_patch = nn.Parameter(torch.zeros(1, 3, 16, 16))
         self.noise_scale = nn.Parameter(torch.tensor(0.05))
         self.noise_prob = 0.3  # probability to apply noise during training
