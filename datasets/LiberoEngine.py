@@ -168,15 +168,14 @@ class LiberoDataset(Dataset):
         # Current frame is the last in history
         # raw_images = raw_images_history[-1]
 
-        # load subgoals (unchanged)
         # load subgoals
+        # TODO Load goal proprios as well as goal images
         subgoals = []
         for i in range(self.recursive_step):
-            # print(goal_idx)
+            # Move rec_plan_coef * dist(goal-current) from cur_idx => Backward approach to current idx
             raw_img = cv2.imdecode(observations[self.main_view][goal_idx], cv2.IMREAD_COLOR)
             subgoals.append(raw_img)
             goal_idx = cur_idx + int((goal_idx - cur_idx) * self.rec_plan_coef)
-            # Move rec_plan_coef * dist(goal-current) from cur_idx => Backward approach to current idx
         # load actions with chunking
         np_action_history = []
         for idx in history_indices:
@@ -251,7 +250,7 @@ class LiberoDataset(Dataset):
             'instruction': instruction,                      # str
             'images_history': final_images_history,          # [history_length, V, C, H, W]
             'proprios_history': final_proprio_history,       # [history_length, P]
-            'next_images': final_next_images,                # [V, C, H, W]
+            'next_image': final_next_images,                # [V, C, H, W]
             'next_proprio': final_next_proprio,              # [P]
             'traj_path': meta[0],
             'cur_idx': meta[1],

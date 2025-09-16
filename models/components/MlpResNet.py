@@ -88,12 +88,12 @@ class FilmMLPBlock(nn.Module):
         self.dense2 = nn.Linear(hidden_dim * 4, hidden_dim)
 
     def forward(self, x, cond):
-        out = self.dropout(x)
-        out = self.norm1(out)
+        out = self.norm1(x)
         out = self.dense1(out)
         out = self.film(out, cond)
         out = self.ac_fn(out)
         out = self.dense2(out)
+        out = self.dropout(out)
         out = x + out
         return out
 

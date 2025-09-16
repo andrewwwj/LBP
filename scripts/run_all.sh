@@ -43,7 +43,7 @@ PLANNER_EXP_DIR="${LOG_DIR}/$(date +"%m-%d")_${PLANNER_MODEL_NAME}_hor${PLANNER_
 #PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/baseline/08-11_mid_planner_dnce_noise_bs64_seed3407"
 # -- libero10-wo-t8 --
 #PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/exp/09-12_mid_planner_dnce_noise_hor4_bs128_seed3407"
-PLANNER_CKPT_PATH="${PLANNER_EXP_DIR}/Model_ckpt_75000.pth"
+PLANNER_CKPT_PATH="${PLANNER_EXP_DIR}/Model_ckpt_100000.pth"
 
 # --- Policy-Specific Configuration ---
 POLICY_ITER_TOTAL=12800000
@@ -79,6 +79,7 @@ mkdir -p $LOG_DIR
 cp "./models/components/ActionHead.py" "$LOG_DIR/"
 cp "./models/MidPlanner.py" "$LOG_DIR/"
 cp "./models/LBP.py" "$LOG_DIR/"
+cp "./models/components/MetaTask.py" "$LOG_DIR/"
 touch "$LOG_DIR/train_info.txt"
 
 # 1) Train planner

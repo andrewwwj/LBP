@@ -123,12 +123,10 @@ class MidImaginator(nn.Module):
         self.chunk_length = kwargs.get('chunk_length')
         self.ik_func = IKContextExtractor(
             proprio_dim=kwargs.get('proprio_dim', 9),
-            vision_dim=self.latent_dim,
+            vl_dim=self.latent_dim,
+            latent_dim=512,
             action_dim=self.action_size * self.chunk_length,
-            hidden_dim=self.latent_dim,
-            num_p_tokens=kwargs.get('num_p_tokens', 4),
-            num_v_tokens=kwargs.get('num_v_tokens', 8),
-            num_a_tokens=kwargs.get('num_a_tokens', 2),
+            num_latents=128,
         )
 
     def forward(self, cur_images, sub_goals, **kwargs):
@@ -138,7 +136,8 @@ class MidImaginator(nn.Module):
         images_history = kwargs['images_history']            # [B, T, V, C, H, W]
         proprios_history = kwargs['proprios_history']        # [B, T, P]
         prev_action = kwargs['prev_action']                  # [B, A]
-        next_proprio = kwargs['next_proprio']                # [B, P]
+        proprio_next = kwargs['next_proprio']                # [B, P]
+        # image_next = kwargs['next_image']
 
         s0 = self.latent_proj.img_proj(cur_images[:, 0, ...])
         sg = self.latent_proj.lang_proj(instruction)
@@ -158,11 +157,9 @@ class MidImaginator(nn.Module):
         for i in range(1, self.recursive_step):
             target_subgoal = sub_goals[:, i, ...]
             if randomness:
-                # latent planners
                 last_subgoal = pred_subgoal
                 pred_subgoal = self.latent_planner(s0, last_subgoal, sg)
             else:
-                # latent planners
                 last_subgoal = sub_goals[:, i - 1, ...]
                 if self.state_random_noise:
                     random_noise = torch.randn_like(last_subgoal) * self.state_noise_strength
@@ -170,33 +167,31 @@ class MidImaginator(nn.Module):
                 pred_subgoal = self.latent_planner(s0, last_subgoal, sg)
             loss_dict[f"loss_latent_w{i}"] = self.loss_func(pred_subgoal, target_subgoal)
 
-        # Base subgoal loss
-        subgoal_loss = sum(loss_dict.values()) / len(loss_dict)
+        total_loss = sum(loss_dict.values()) / len(loss_dict)
 
         # ---- IK loss ----
         _, T, V, C, H, W = images_history.shape
-        img_emb_hist = []
+        img_latent_hist = []
         for t in range(T):
-            x_t = images_history[:, t, 0, ...]               # main view only
-            z_t = self.latent_proj.img_proj(x_t)             # [B, 1024]
-            img_emb_hist.append(z_t)
-        img_emb_history = torch.stack(img_emb_hist, dim=1)   # [B, T, 1024]
+            img = images_history[:, t, 0, ...]               # main view only
+            img_latent = self.latent_proj.img_proj(img)             # [B, 1024]
+            img_latent_hist.append(img_latent)
+        img_latent_history = torch.stack(img_latent_hist, dim=1)   # [B, T, 1024]
 
         # IK forward
         _, ik_loss_dict = self.ik_func(
-            img_history=img_emb_history,
-            proprio_history=proprios_history,
-            next_proprio=next_proprio,
+            img_history=img_latent_history,
+            p_history=proprios_history,
+            p_next=proprio_next,
             lang_emb=sg,
-            prev_action=prev_action,
+            prev_action=prev_action
         )
 
         # Add IK losses to loss dictionary
         loss_dict.update(ik_loss_dict)
-
-        # Combine losses
         ik_loss = sum(ik_loss_dict.values())
-        total_loss = subgoal_loss + ik_loss
+        total_loss = total_loss + ik_loss
+
         loss_dict['loss'] = total_loss
         return total_loss, loss_dict
 
