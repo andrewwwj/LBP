@@ -92,13 +92,13 @@ class IKContextExtractor(nn.Module):
         self.cross_attn = CrossAttnBlock(embed_dim=latent_dim,
                                          dim_feedforward=latent_dim * 2,
                                          num_layers=1)
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=latent_dim,
-            nhead=num_heads,
-            dim_feedforward=latent_dim * 2,
-            batch_first=True
-        )
-        self.self_attn = nn.TransformerEncoder(encoder_layer, num_layers=3)
+        # encoder_layer = nn.TransformerEncoderLayer(
+        #     d_model=latent_dim,
+        #     nhead=num_heads,
+        #     dim_feedforward=latent_dim * 2,
+        #     batch_first=True
+        # )
+        # self.self_attn = nn.TransformerEncoder(encoder_layer, num_layers=1)
         self.delta_head = nn.Sequential(
             nn.Linear(latent_dim * 3, latent_dim * 4),
             nn.GELU(),
@@ -133,6 +133,10 @@ class IKContextExtractor(nn.Module):
             curr_action = torch.zeros(B, self.action_dim, device=p_curr.device, dtype=p_curr.dtype)
         if self.training and self.action_drop_prob > 0 and torch.rand(()) < self.action_drop_prob:
             curr_action = torch.zeros_like(curr_action)
+        # else:
+        #     if self.action_noise:
+        #         random_noise = torch.randn_like(curr_action) * 0.01
+        #         curr_action = curr_action + random_noise
         a_curr = self.action_encoder(curr_action)  # [B, D]
 
         # Apply FiLM IK on deltas conditioned on action
@@ -152,7 +156,8 @@ class IKContextExtractor(nn.Module):
         q_latents = repeat(self.latent_query, '1 n d -> b n d', b=B)  # [B, L, H]
         kv_tokens = torch.cat([pl_tokens, vl_tokens], dim=1)  # [B, N+M, H]
 
-        latents = self.self_attn(self.cross_attn(q_latents, kv_tokens))  # [B, L, H]
+        # latents = self.self_attn(self.cross_attn(q_latents, kv_tokens))  # [B, L, H]
+        latents = self.cross_attn(q_latents, kv_tokens)
         q_out = repeat(self.output_query, '1 p d -> b p d', b=B)     # [B, 1, H]
         latent_ik = self.out_cross(q_out, latents).squeeze(1)  # [B, H]
 
@@ -163,9 +168,13 @@ class IKContextExtractor(nn.Module):
 
         # ---------------- Representation losses ------------------
         loss_dict = {}
-        # 1) InfoNCE between token sets
-        loss_nce = self._info_nce_set2set(pl_tokens, vl_tokens, tau=self.tau)
-        loss_dict['loss_nce'] = loss_nce
+        # 1-1) InfoNCE between token sets
+        # loss_nce = self._info_nce_set2set(pl_tokens, vl_tokens, tau=self.tau)
+        # loss_nce = self._info_nce(pl_tokens.mean(1), vl_tokens.mean(1), tau=self.tau)
+        # loss_dict['loss_nce'] = loss_nce
+        # 1-2) SimCLR-style contrastive loss on pooled tokens (replaces InfoNCE)
+        loss_simclr = self._simclr_loss(pl_tokens, vl_tokens, tau=self.tau, pool='mean')
+        loss_dict['loss_simclr'] = loss_simclr
 
         # 2) Latent alignment: cosine-based (scale-invariant)
         loss_align = self._cosine_align(pl_ik, vl_ik)
@@ -184,6 +193,49 @@ class IKContextExtractor(nn.Module):
         # total_loss = sum(losses)
 
         return next_delta_p, loss_dict
+
+    def _simclr_loss(self, p_tokens, v_tokens, tau: float = 0.07, pool: str = 'mean'):
+        """
+        SimCLR-style contrastive loss between proprio and vision token sets.
+        - Pools tokens per sample to obtain a single embedding per modality.
+        - Builds a 2B x 2B similarity matrix; for each anchor, the positive is
+          its paired sample from the other modality.
+        Args:
+            p_tokens: [B, K, D]
+            v_tokens: [B, M, D]
+            tau: temperature
+            pool: 'mean' or 'max'
+        Returns:
+            scalar loss
+        """
+        B = p_tokens.shape[0]
+        if pool == 'mean':
+            p = p_tokens.mean(dim=1)  # [B, D]
+            v = v_tokens.mean(dim=1)  # [B, D]
+        elif pool == 'max':
+            p = p_tokens.max(dim=1).values
+            v = v_tokens.max(dim=1).values
+        else:
+            raise ValueError(f"Unsupported pool type: {pool}")
+
+        # Normalize embeddings
+        p = F.normalize(p, dim=-1)
+        v = F.normalize(v, dim=-1)
+
+        # Concatenate views to form 2B embeddings
+        z = torch.cat([p, v], dim=0)  # [2B, D]
+        logits = z @ z.t() / tau      # [2B, 2B]
+
+        # Mask self-similarity on the diagonal
+        diag_mask = torch.eye(2 * B, dtype=torch.bool, device=z.device)
+        logits = logits.masked_fill(diag_mask, float('-inf'))
+
+        # Positive indices: i -> i+B for i in [0..B-1], and i -> i-B for i in [B..2B-1]
+        idx = torch.arange(B, device=z.device)
+        pos = torch.cat([idx + B, idx], dim=0)  # [2B]
+
+        loss = F.cross_entropy(logits, pos)
+        return loss
 
     def _info_nce(self, a, b, tau=0.07):
         a = F.normalize(a, dim=-1)

@@ -157,6 +157,7 @@ def train(config, logger, model, train_loader, optimizer, lr_scheduler):
 
 def main(config):
     torch.backends.cudnn.benchmark = True
+    torch.set_float32_matmul_precision('high')
     # init env
     if config['use_ddp']:
         world_size, global_rank, local_rank = init_ddp_env(gpus=config['gpus'])

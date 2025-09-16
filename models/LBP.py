@@ -38,7 +38,7 @@ class LBPPolicy(nn.Module):
         super().__init__()
         from .factory import create_model
         # condition encoder
-        state_dict = torch.load(imaginator_ckpt_path, map_location='cpu')
+        state_dict = torch.load(imaginator_ckpt_path, map_location='cpu', weights_only=True)
         self.imaginator = mid_planner_dnce_noise(recursive_step=4)
         self.imaginator.load_state_dict(state_dict, strict=True)  # load trained planner
         self.imaginator.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else self.imaginator
@@ -56,7 +56,7 @@ class LBPPolicy(nn.Module):
         policy_dict = {}
         if expert_policy_ckpt_path and expert_policy_config:
             expert_policy_ckpt = create_model(**expert_policy_config)
-            state_dict = torch.load(expert_policy_ckpt_path, map_location='cpu')
+            state_dict = torch.load(expert_policy_ckpt_path, map_location='cpu', wweights_only=True)
             expert_policy_ckpt.load_state_dict(state_dict, strict=True)
             expert_policy_ckpt.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else expert_policy_ckpt
             expert_policy_ckpt.requires_grad_(False)  # Freeze pre-trained expert diffusion model
@@ -64,7 +64,7 @@ class LBPPolicy(nn.Module):
             policy_dict['expert'] = expert_policy_ckpt.cuda()
         if policy_ckpt_path and policy_config:
             policy_ckpt = create_model(**policy_config)
-            state_dict = torch.load(policy_ckpt_path, map_location='cpu')
+            state_dict = torch.load(policy_ckpt_path, map_location='cpu', weights_only=True)
             policy_ckpt.load_state_dict(state_dict, strict=True)
             policy_ckpt.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else policy_ckpt
             policy_ckpt.requires_grad_(False)  # Freeze pre-trained diffusion model
