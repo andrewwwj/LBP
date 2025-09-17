@@ -5,7 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from timm.layers import Mlp
 from .CrossAttn import CrossAttnBlock
-from .ResNet import FilmResNet
 from .MlpResNet import FilmMLP, MlpResNet
 
 def init_weight(m):
@@ -32,7 +31,6 @@ class FiLM_layer(nn.Module):
         while len(gammas.shape) < len(x.shape):
             gammas = gammas.unsqueeze(1)
             betas = betas.unsqueeze(1)
-
         return x * (gammas + 1) + betas
 
 class FourierPositionalEncoding1D(nn.Module):
@@ -55,9 +53,10 @@ class FourierPositionalEncoding1D(nn.Module):
 
 class IKContextExtractor(nn.Module):
 
-    def __init__(self, proprio_dim, vl_dim, latent_dim, action_dim, num_latents=128, action_noise=True,
+    def __init__(self, proprio_dim, vl_dim, hidden_dim, p_goal_dim, action_dim, num_latents=128, action_noise=True,
                  num_heads=8, num_p_tokens=4, num_v_tokens=8,):
         super().__init__()
+        latent_dim = hidden_dim
         self.proprio_dim = proprio_dim
         self.action_dim = action_dim
         self.action_drop_prob = 0.5
@@ -71,9 +70,9 @@ class IKContextExtractor(nn.Module):
         self.tau = 0.07
         self.w_nce = 1.0
         self.w_align = 1.0
-        self.vision_encoder = FilmMLP(input_dim=vl_dim, cond_dim=vl_dim, output_size=latent_dim)
-        self.proprio_encoder = FilmMLP(input_dim=proprio_dim, cond_dim=vl_dim, output_size=latent_dim)
-        self.action_encoder = MlpResNet(num_blocks=3, input_dim=action_dim, hidden_dim=latent_dim, output_size=latent_dim)
+        self.vision_encoder = FilmMLP(input_dim=vl_dim, cond_dim=vl_dim, output_size=p_goal_dim)
+        self.proprio_encoder = FilmMLP(input_dim=proprio_dim, cond_dim=vl_dim, output_size=p_goal_dim)
+        self.action_encoder = MlpResNet(num_blocks=3, input_dim=action_dim, hidden_dim=latent_dim, output_size=p_goal_dim)
 
         # Tokenizers
         self.vision_tokenizer = nn.Linear(latent_dim, num_v_tokens * latent_dim)
@@ -103,11 +102,12 @@ class IKContextExtractor(nn.Module):
         self.out_cross = CrossAttnBlock(embed_dim=latent_dim,
                                         dim_feedforward=latent_dim * 2,
                                         num_layers=1)
+        # TODO 학습 불안정 -> tanh 추가
         self.delta_head = nn.Sequential(
-            nn.Linear(latent_dim * 3, latent_dim * 4),
+            nn.Linear(latent_dim * 2, latent_dim * 4),
             nn.GELU(),
             nn.LayerNorm(latent_dim * 4),
-            nn.Linear(latent_dim * 4, latent_dim)
+            nn.Linear(latent_dim * 4, p_goal_dim)
         )
         self.apply(init_weight)
 
@@ -120,6 +120,7 @@ class IKContextExtractor(nn.Module):
         v_curr = img_history[:, -1]       # [B, Dv]
 
         # Encode with FiLM-MLP conditioned on language
+        # TODO lang_emb=sg -> subgoal 로 교체?
         pl_prev = self.proprio_encoder(p_prev, lang_emb)   # [B, H]
         pl_curr = self.proprio_encoder(p_curr, lang_emb)   # [B, H]
         vl_prev = self.vision_encoder(v_prev, lang_emb)    # [B, H]
@@ -129,15 +130,15 @@ class IKContextExtractor(nn.Module):
         delta_vl = vl_curr - vl_prev                       # [B, H]
 
         # TODO zero 대신 null embedding 입력?
-        if curr_action is None:
-            curr_action = torch.zeros(B, self.action_dim, device=p_curr.device, dtype=p_curr.dtype)
-        if self.training and self.action_drop_prob > 0 and torch.rand(()) < self.action_drop_prob:
-            curr_action = torch.zeros_like(curr_action)
+        # if curr_action is None:
+        #     curr_action = torch.zeros(B, self.action_dim, device=p_curr.device, dtype=p_curr.dtype)
+        # if self.training and self.action_drop_prob > 0 and torch.rand(()) < self.action_drop_prob:
+        #     curr_action = torch.zeros_like(curr_action)
         # else:
         #     if self.action_noise:
         #         random_noise = torch.randn_like(curr_action) * 0.01
         #         curr_action = curr_action + random_noise
-        a_curr = self.action_encoder(curr_action)  # [B, D]
+        # a_curr = self.action_encoder(curr_action)  # [B, D]
         a_prev = self.action_encoder(prev_action)  # [B, D]
 
         p_tokens = self.proprio_tokenizer(delta_pl).view(B, self.num_p_tokens, -1)  # (B, Np, D)
@@ -161,21 +162,23 @@ class IKContextExtractor(nn.Module):
         kv_token = torch.cat([p_ik, v_ik], dim=1)  # [B, Np+Nv, D]
 
         # Extract latent IK
-        latents = self.cross_attn(q_latents, kv_token)
-        latent_ik = self.out_cross(q_out, latents).squeeze(1)  # [B, H]
+        latent_ik = self.cross_attn(q_latents, kv_token)
+        latent_ik = self.out_cross(q_out, latent_ik).squeeze(1)  # [B, H]
 
-        # Predict next Δproprio
-        # t(Δp' | Δp, a) => Δp' = f(t, Δp, a)
-        rollout = torch.cat([latent_ik, delta_pl, a_curr], dim=-1)
-        next_delta_p = self.delta_head(rollout)
+        # Predict Δproprio // t (Δp' | Δp) => Δp' = f(t, Δp)
+        rollout = torch.cat([latent_ik, delta_pl], dim=-1)
+        delta_pl_next = self.delta_head(rollout)
+        # TODO pl_curr detach?
+        pred_pl_next = pl_curr + delta_pl_next
 
-        # ---------------- Representation losses ------------------
+        # ---------------- Representation losses ------------------ #
         if self.training:
             loss_dict = {}
             # 1-1) InfoNCE between token sets
             # loss_nce = self._info_nce_set2set(pl_tokens, vl_tokens, tau=self.tau)
             # loss_dict['loss_nce'] = loss_nce
             # 1-2) SimCLR-style contrastive loss on pooled tokens (replaces InfoNCE)
+            # TODO 아래 loss가 latent_IK 학습에 도움이 될 지 고민
             loss_simclr = self._simclr_loss(p_ik, v_ik, tau=self.tau, pool='mean')
             loss_dict['loss_simclr'] = loss_simclr
 
@@ -183,15 +186,15 @@ class IKContextExtractor(nn.Module):
             loss_align = self._cosine_align(p_ik.mean(1), v_ik.mean(1))
             loss_dict['loss_align'] = loss_align
 
-            # Delta supervision
-            pl_next = self.proprio_encoder(p_next, lang_emb)
-            delta_gt = pl_next - pl_curr
-            loss_delta = F.smooth_l1_loss(next_delta_p, delta_gt.detach())
+            with torch.no_grad():
+                pl_next_gt = self.proprio_encoder(p_next, lang_emb)
+            # Huber loss
+            loss_delta = F.mse_loss(pred_pl_next, pl_next_gt)
             loss_dict['loss_delta_p'] = loss_delta
 
-            return next_delta_p, loss_dict
+            return pred_pl_next, loss_dict
 
-        return next_delta_p, None
+        return pred_pl_next, None
 
     def _simclr_loss(self, a, b, tau: float = 0.07, pool: str = 'mean'):
         """

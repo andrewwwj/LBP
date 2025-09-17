@@ -17,6 +17,8 @@ class LBPPolicy(nn.Module):
         vision_backbone_name: str = "resnet34",
         policy_num_blocks = 3,
         policy_hidden_dim = 256,
+        latent_dim=1024,
+        p_goal_dim=512,
         action_size = 7,
         chunk_length = 4,
         num_views = 2,
@@ -31,44 +33,43 @@ class LBPPolicy(nn.Module):
         expert_policy_config: dict = None,
         diffusion_input_key: str = 'pvg',
         energy_input_key: str = 'pvg',
-        context_dim: int = 512,  # Dimension of task_latent
-        history_length: int = 3,  # Length of observation history
         **kwargs,
     ):
         super().__init__()
         from .factory import create_model
+        self.recursive_step = recursive_step
+        self.num_views = num_views  # image views
+        self.latent_dim = latent_dim
+        self.p_goal_dim = p_goal_dim
+        self.action_size = action_size
+        self.chunk_length = chunk_length
         # condition encoder
         state_dict = torch.load(imaginator_ckpt_path, map_location='cpu', weights_only=True)
-        self.imaginator = mid_planner_dnce_noise(recursive_step=4)
+        self.imaginator = mid_planner_dnce_noise(recursive_step=recursive_step, chunk_length=chunk_length, p_goal_dim=p_goal_dim, **kwargs)
         self.imaginator.load_state_dict(state_dict, strict=True)  # load trained planner
-        self.imaginator.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else self.imaginator
+        self.imaginator.eval()
         self.imaginator.requires_grad_(False)  # Freeze pre-trained planner
+        self.imaginator.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else self.imaginator
         # Re-enable training for learnable noise parameters only
         # if hasattr(self.imaginator, 'latent_proj') and hasattr(self.imaginator.latent_proj, 'noise_patch_small'):
         #     self.imaginator.latent_proj.noise_patch_small.requires_grad_(True)
         #     self.imaginator.latent_proj.noise_scale.requires_grad_(True)
-        self.recursive_step = recursive_step
-        self.num_views = num_views  # image views
-        self.context_dim = context_dim
-        self.latent_dim = 1024
-        self.action_size = action_size
-        self.chunk_length = chunk_length
         policy_dict = {}
         if expert_policy_ckpt_path and expert_policy_config:
             expert_policy_ckpt = create_model(**expert_policy_config)
             state_dict = torch.load(expert_policy_ckpt_path, map_location='cpu', wweights_only=True)
             expert_policy_ckpt.load_state_dict(state_dict, strict=True)
-            expert_policy_ckpt.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else expert_policy_ckpt
-            expert_policy_ckpt.requires_grad_(False)  # Freeze pre-trained expert diffusion model
             expert_policy_ckpt.eval()
+            expert_policy_ckpt.requires_grad_(False)  # Freeze pre-trained expert diffusion model
+            expert_policy_ckpt.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else expert_policy_ckpt
             policy_dict['expert'] = expert_policy_ckpt.cuda()
         if policy_ckpt_path and policy_config:
             policy_ckpt = create_model(**policy_config)
             state_dict = torch.load(policy_ckpt_path, map_location='cpu', weights_only=True)
             policy_ckpt.load_state_dict(state_dict, strict=True)
-            policy_ckpt.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else policy_ckpt
-            policy_ckpt.requires_grad_(False)  # Freeze pre-trained diffusion model
             policy_ckpt.eval()
+            policy_ckpt.requires_grad_(False)  # Freeze pre-trained diffusion model
+            policy_ckpt.compile(mode="max-autotune-no-cudagraphs", dynamic=False) if kwargs['compile'] else policy_ckpt
             policy_dict['student'] = policy_ckpt.cuda()
 
         # Goal fusion
@@ -95,7 +96,8 @@ class LBPPolicy(nn.Module):
                 proprio_dim=self.proprio_dim,
                 vis_lang_dim=self.vision_dim,
                 latent_goal_dim=self.latent_dim,
-                context_dim=context_dim,
+                p_goal_dim=self.p_goal_dim,
+                proprio_goal_dim=self.latent_dim,
                 diffusion_input_key=diffusion_input_key,
                 energy_input_key=energy_input_key,
                 policy_dict=policy_dict,
@@ -105,27 +107,29 @@ class LBPPolicy(nn.Module):
         self.loss_func = loss_func(**loss_func_config)
         self.num_iters = kwargs.get('num_iters')
 
+    def train(self, mode: bool = True):
+        super().train(mode)
+        self.imaginator.eval()
+        # TODO Freeze expert/student policy either
+        return self
+
     def forward(self, cur_images, cur_proprios, cur_actions, **kwargs):
         # all_obs = self.forward_cond(cur_images, cur_proprios, instruction)
         # loss = self.forward_head(all_obs, cur_actions)
         # return loss, dict(loss=loss)
+
         instruction = kwargs["instruction"]
         image_history = kwargs['images_history']
-        proprio_history = kwargs['proprios_history']
-        prev_action_chunk = kwargs['prev_action']
-        # prev_action = prev_action_chunk[:, :self.action_size]
-        ep_iter = kwargs['ep_iter']
-        progress = ep_iter / self.num_iters
+        proprios_history = kwargs['proprios_history']        # [B, T, P]
+        prev_action = kwargs['prev_action']                  # [B, A]
+        # ep_iter = kwargs['ep_iter']
+        # progress = ep_iter / self.num_iters
 
-        # planned_subogals, details = self.imaginator.generate(cur_images, instruction, self.recursive_step)
-        planned_subogals, details = self.imaginator.generate(image_history, instruction, self.recursive_step)
-        img_emb = details['img_latent']  # s_0
-        fused_goal = self.goal_fusion(img_emb.unsqueeze(1), planned_subogals).squeeze(1)
+        subgoals, p_subgoal, details = self.imaginator.generate(image_history, instruction, self.recursive_step, proprios_history, prev_action)
+        z0 = details['img_latent']
+        fused_goal = self.goal_fusion(z0.unsqueeze(1), subgoals).squeeze(1)
 
-        # Use DNCE image latent as visual feature; context is a zero placeholder
-        vl_emb = img_emb
-        context = torch.zeros(vl_emb.shape[0], self.context_dim, device=vl_emb.device, dtype=vl_emb.dtype)
-        all_obs = (vl_emb, cur_proprios, fused_goal, context)
+        all_obs = (z0, cur_proprios, fused_goal, p_subgoal)
         diffusion_loss = self.head(all_obs, cur_actions)
         total_loss = diffusion_loss
 
@@ -135,45 +139,42 @@ class LBPPolicy(nn.Module):
         # all_obs = self.forward_cond(cur_images, cur_proprios, instruction)
         # pred_actions = self.generate_head(all_obs)
         # return pred_actions, dict(actions=pred_actions)
+
         instruction = kwargs["instruction"]
         image_history = kwargs['images_history']
-        proprio_history = kwargs['proprios_history']
-        # prev_action = prev_action_chunk[:, :self.action_size]
+        with torch.inference_mode():
+            self.imaginator.eval()
+            subgoals, p_subgoal, details = self.imaginator.generate(image_history, instruction, self.recursive_step)
+        z0 = details['img_latent']
+        fused_goal = self.goal_fusion(z0.unsqueeze(1), subgoals).squeeze(1)
 
-        planned_subogals, details = self.imaginator.generate(image_history, instruction, self.recursive_step)
-        cur_query = details['img_latent']  # s_0
-        fused_goal = self.goal_fusion(cur_query.unsqueeze(1), planned_subogals).squeeze(1)
-
-        # Use DNCE image latent as visual feature; context is a zero placeholder
-        vl_emb = cur_query
-
-        all_obs = (vl_emb, cur_proprios, fused_goal)
+        all_obs = (z0, cur_proprios, fused_goal, p_subgoal)
         pred_actions = self.head.generate(all_obs)
 
         return pred_actions, dict(actions=pred_actions)
 
-    def forward_cond(self, vision_obs, proprio_obs, **kwargs):
-        B, V, C, H, W = vision_obs.shape
-        planned_subogals, details = self.imaginator.generate(vision_obs, kwargs["instruction"], self.recursive_step)
-        lang_emb = details['lang_latent']
-        cur_query = details['img_latent']  # latent s0
-        fused_goal = self.goal_fusion(cur_query.unsqueeze(1), planned_subogals).squeeze(1)
-        lang = lang_emb.unsqueeze(1).repeat(1, V, 1).reshape(B*V, -1)
-        vision_obs = vision_obs.reshape(B*V, C, H, W) # B*2 3 224 224
-        # vision-language semantics
-        vl_semantics = self.vision_encoder(vision_obs, lang)
-        vl_semantics = vl_semantics.reshape(B, -1)
-        return vl_semantics, proprio_obs, fused_goal
-
-    def forward_head(self, all_obs, cur_actions):
-        if self.decoder_head == 'base':
-            pred_actions = self.head(all_obs)
-            loss = self.loss_func(pred_actions, cur_actions)
-            return loss
-        elif self.decoder_head == 'ddpm':
-            # DDPM head handles tuple input internally
-            loss = self.head(all_obs, cur_actions)
-            return loss
+    # def forward_cond(self, vision_obs, proprio_obs, **kwargs):
+    #     B, V, C, H, W = vision_obs.shape
+    #     planned_subogals, details = self.imaginator.generate(vision_obs, kwargs["instruction"], self.recursive_step)
+    #     lang_emb = details['lang_latent']
+    #     cur_query = details['img_latent']  # latent s0
+    #     fused_goal = self.goal_fusion(cur_query.unsqueeze(1), planned_subogals).squeeze(1)
+    #     lang = lang_emb.unsqueeze(1).repeat(1, V, 1).reshape(B*V, -1)
+    #     vision_obs = vision_obs.reshape(B*V, C, H, W) # B*2 3 224 224
+    #     # vision-language semantics
+    #     vl_semantics = self.vision_encoder(vision_obs, lang)
+    #     vl_semantics = vl_semantics.reshape(B, -1)
+    #     return vl_semantics, proprio_obs, fused_goal
+    #
+    # def forward_head(self, all_obs, cur_actions):
+    #     if self.decoder_head == 'base':
+    #         pred_actions = self.head(all_obs)
+    #         loss = self.loss_func(pred_actions, cur_actions)
+    #         return loss
+    #     elif self.decoder_head == 'ddpm':
+    #         # DDPM head handles tuple input internally
+    #         loss = self.head(all_obs, cur_actions)
+    #         return loss
 
     def generate_head(self, all_obs):
         if self.decoder_head == 'base':

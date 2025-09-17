@@ -44,8 +44,8 @@ class DDPMHead(nn.Module):
             guidance_mode: str = "cg",
             proprio_dim: int = None,
             latent_goal_dim: int = None,
+            p_goal_dim: int = None,
             vis_lang_dim: int = None,
-            context_dim: int = None,
             diffusion_input_key: str = None,
             energy_input_key: str = None,
             policy_dict: dict = None,
@@ -63,12 +63,14 @@ class DDPMHead(nn.Module):
         self.diffusion_input_key = diffusion_input_key
         self.energy_input_key = energy_input_key if self.mode == 'energy' else ''
 
-        dim_combination = {'v': vis_lang_dim, 'p': proprio_dim, 'g': latent_goal_dim,
-                            'vp': proprio_dim + vis_lang_dim, 'vg': vis_lang_dim + latent_goal_dim,
-                            'pg': proprio_dim + latent_goal_dim, 'pvg': proprio_dim + vis_lang_dim + latent_goal_dim,
-                            'c': context_dim, 'cv': context_dim + vis_lang_dim, 'cg': context_dim + latent_goal_dim,
-                            'cvg': context_dim + vis_lang_dim + latent_goal_dim,
-                            }
+        dim_combination = {'p': proprio_dim, 'v': vis_lang_dim, 'g': latent_goal_dim,
+                           'gv': vis_lang_dim + latent_goal_dim, 'pv': proprio_dim + vis_lang_dim,
+                           'gpv': latent_goal_dim + proprio_dim + vis_lang_dim,
+                           'gpz': latent_goal_dim + proprio_dim + p_goal_dim,
+                           'gpvz': latent_goal_dim + proprio_dim + vis_lang_dim + p_goal_dim,
+                           }
+        self.diffusion_input_key = ''.join(sorted(self.diffusion_input_key))
+        self.energy_input_key = ''.join(sorted(self.energy_input_key))
         self.diffusion_input_dim = dim_combination[self.diffusion_input_key]
         self.energy_input_dim = dim_combination[self.energy_input_key] if self.mode == 'energy' else 0
         if self.mode == 'cg':
@@ -100,9 +102,9 @@ class DDPMHead(nn.Module):
             # }
             # 2) Null embedding = learnable embedding w/ randn initialization
             self.uncond_embedding = nn.ParameterDict({
-                # 'c': nn.Parameter(torch.randn(1, context_dim)),
-                # 'p': nn.Parameter(torch.randn(1, proprio_dim)),
-                'v': nn.Parameter(torch.randn(1, vis_lang_dim)),
+                'p': nn.Parameter(torch.randn(1, proprio_dim)),
+                'pg': nn.Parameter(torch.randn(1, p_goal_dim)),
+                # 'v': nn.Parameter(torch.randn(1, vis_lang_dim)),
                 'g': nn.Parameter(torch.randn(1, latent_goal_dim))
             })
         elif self.mode == 'energy':
@@ -159,8 +161,8 @@ class DDPMHead(nn.Module):
         return noise_pred
 
     def forward(self, all_obs, cur_action, progress=None):
-        vl_semantics, proprio_obs, fused_goal, context = all_obs
-        modality_dict = {'c': context, 'v': vl_semantics, 'p': proprio_obs, 'g': fused_goal, }
+        vl_semantics, proprio_obs, fused_goal, p_goal = all_obs
+        modality_dict = {'p': proprio_obs, 'z': p_goal, 'v': vl_semantics, 'g': fused_goal, }
         diffusion_obs = torch.cat([modality_dict[key] for key in self.diffusion_input_key], dim=-1)
         B, T, S, A = diffusion_obs.shape[0], self.num_timesteps, self.num_samples, self.action_size
         if self.mode == 'cg':
@@ -173,28 +175,23 @@ class DDPMHead(nn.Module):
             # Sample t & noisy action at t
             noise, t_tensor, noisy_action = self.add_noise(cur_action)
             """ Use a different null embedding for each modality """
-            # context_masked = context if not progress else self.uncond_embedding['c'].repeat(B, 1)
-            # proprio_obs_masked = proprio_obs.clone()
-            vl_semantics_masked = vl_semantics.clone()
+            proprio_masked = proprio_obs.clone()
+            # vl_semantics_masked = vl_semantics.clone()
             fused_goal_masked = fused_goal.clone()
 
-            # context_mask = torch.rand(B, device=context.device) < self.cfg_prob
-            # proprio_mask = torch.rand(B, device=proprio_obs.device) < self.cfg_prob
-            vl_mask = torch.rand(B, device=vl_semantics.device) < self.cfg_prob
+            proprio_mask = torch.rand(B, device=proprio_obs.device) < self.cfg_prob
+            # vl_mask = torch.rand(B, device=vl_semantics.device) < self.cfg_prob
             goal_mask = torch.rand(B, device=fused_goal.device) < self.cfg_prob
 
             # Flag to indicate which modality is masked to model / flag = 0 if null
-            # mode_flags = torch.stack([~context_mask, ~goal_mask], dim=1).float()
-            # mode_flags = torch.stack([~context_mask, ~vl_mask, ~goal_mask], dim=1).float()
+            # mode_flags = torch.stack([~proprio_mask, ~vl_mask, ~goal_mask], dim=1).float()
 
-            # context_masked[context_mask] = self.uncond_embedding['c']
-            # proprio_obs_masked[proprio_mask] = self.uncond_embedding['p']
-            vl_semantics_masked[vl_mask] = self.uncond_embedding['v']
+            proprio_masked[proprio_mask] = self.uncond_embedding['p']
+            # vl_semantics_masked[vl_mask] = self.uncond_embedding['v']
             fused_goal_masked[goal_mask] = self.uncond_embedding['g']
 
-            # obs = torch.cat([context_masked, vl_semantics_masked, fused_goal_masked, mode_flags], dim=-1)
-            obs = torch.cat([context, vl_semantics_masked, fused_goal_masked], dim=-1)
-            # obs = context_masked
+            # obs = torch.cat([proprio_masked, vl_semantics_masked, fused_goal_masked, mode_flags], dim=-1)
+            obs = torch.cat([proprio_masked, p_goal, fused_goal_masked], dim=-1)
 
             """ COMMON """
             noise_pred = self.forward_features(obs, t_tensor, noisy_action)

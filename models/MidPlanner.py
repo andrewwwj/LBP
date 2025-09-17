@@ -109,29 +109,30 @@ class MidImaginator(nn.Module):
             **kwargs
     ):
         super().__init__()
-        self.latent_dim = latent_dim
+        self.vl_latent_dim = latent_dim
         self.recursive_step = recursive_step
         self.state_random_noise = state_random_noise
         self.state_noise_strength = state_noise_strength
         self.loss_func = loss_func(**loss_func_conig)
         self.latent_proj = DnceLatentProj(latent_info_file=latent_info_file)
-        self.goal_rec = DualPathPredictor(latent_dim=self.latent_dim, output_dim=self.latent_dim)
-        self.latent_planner = TriplePathPredictor(latent_dim=latent_dim, output_dim=self.latent_dim)
+        self.goal_rec = DualPathPredictor(latent_dim=self.vl_latent_dim, output_dim=self.vl_latent_dim)
+        self.latent_planner = TriplePathPredictor(latent_dim=latent_dim, output_dim=self.vl_latent_dim)
         # ---- IK training components ----
         self.action_size = action_size
         self.chunk_length = kwargs.get('chunk_length')
+        self.p_goal_dim = kwargs.get('p_goal_dim')
         self.ik_func = IKContextExtractor(
             proprio_dim=kwargs.get('proprio_dim', 9),
-            vl_dim=self.latent_dim,
-            latent_dim=512,
+            vl_dim=self.vl_latent_dim,
+            hidden_dim=512,
+            p_goal_dim=self.p_goal_dim,
             action_dim=self.action_size * self.chunk_length,
             num_latents=128,
         )
 
-    def forward(self, cur_images, sub_goals, **kwargs):
+    def forward(self, cur_images, instruction, sub_goals, **kwargs):
         B, G, C, H, W = sub_goals.shape  # subgoals: a series of images during training
 
-        instruction = kwargs["instruction"]
         images_history = kwargs['images_history']            # [B, T, V, C, H, W]
         proprios_history = kwargs['proprios_history']        # [B, T, P]
         prev_action = kwargs['prev_action']                  # [B, A]
@@ -194,28 +195,36 @@ class MidImaginator(nn.Module):
         loss_dict['loss'] = total_loss
         return total_loss, loss_dict
 
-    def generate(self, images, instruction, recursive_step, **kwargs):
-        sg = self.latent_proj.lang_proj(instruction)
-        # ---------------------------------------
-        # 1) Given current image
-        # s0 = self.latent_proj.img_proj(images[:, 0, ...])  # use world view only
+    def generate(self, image_history, instruction, recursive_step, proprios_history, prev_action):
 
-        # 2) Given image history
-        B, T, V, C, H, W = images.shape
-        s0_history = []
-        for t in range(T):
-            s0 = self.latent_proj.img_proj(images[:, t, 0, ...])  # use world view only
-            s0_history.append(s0)
-        s0_history = torch.stack(s0_history, dim=1)
-        # ---------------------------------------
-        planned_subgoals = [self.goal_rec(s0, sg)]
+        # proprios_history = kwargs['proprios_history']        # [B, T, P]
+        # prev_action = kwargs['prev_action']                  # [B, A]
+
+        # --------------- Sub-goals ---------------
+        # i) Given current image
+        # s0 = self.latent_proj.img_proj(images[:, 0, ...])  # use world view only
+        # ii) Given image history
+        B, T, V, C, H, W = image_history.shape
+        s0_history = torch.stack([self.latent_proj.img_proj(image_history[:, t, 0, ...]) for t in range(T)], dim=1)   # [B, T, 1024]
+        s0 = s0_history[:, -1]
+        sg = self.latent_proj.lang_proj(instruction)
+        subgoals = [self.goal_rec(s0, sg)]
         for i in range(1, recursive_step):
-            last_subgoal = planned_subgoals[-1]
+            last_subgoal = subgoals[-1]
             pred_goal = self.latent_planner(s0, last_subgoal, sg)
-            planned_subgoals.append(pred_goal)
-        planned_subgoals = torch.cat([x.unsqueeze(1) for x in planned_subgoals], dim=1)
-        return planned_subgoals, dict(img_latent=s0, img_emb_history=s0_history,
-                                      planned_subgoals=planned_subgoals, lang_latent=sg)
+            subgoals.append(pred_goal)
+        subgoals = torch.cat([x.unsqueeze(1) for x in subgoals], dim=1)
+
+        # --------------- Proprio subgoal ---------------
+        p_subgoal, _ = self.ik_func(
+            img_history=s0_history,
+            p_history=proprios_history,
+            p_next=None,
+            lang_emb=sg,
+            prev_action=prev_action
+        )
+        
+        return subgoals, p_subgoal, dict(img_latent=s0, img_emb_history=s0_history, lang_latent=sg)
 
 
 def mid_planner_dnce_noise(recursive_step=4, **kwargs):

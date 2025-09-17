@@ -103,11 +103,9 @@ class FilmMLP(nn.Module):
                  ac_fn=F.gelu, dropout_rate=0.1):
         super().__init__()
         self.dense1 = nn.Linear(input_dim, hidden_dim)
-        self.dense2 = nn.Linear(hidden_dim, output_size)
         self.ac_fn = ac_fn
-        self.film_mlp_blocks = nn.ModuleList()
-        for _ in range(num_blocks):
-            self.film_mlp_blocks.append(FilmMLPBlock(hidden_dim, cond_dim, ac_fn, dropout_rate))
+        self.film_mlp_blocks = nn.ModuleList([FilmMLPBlock(hidden_dim, cond_dim, ac_fn, dropout_rate) for _ in range(num_blocks)])
+        self.dense2 = nn.Linear(hidden_dim, output_size)
 
     def forward(self, x, cond):
         out = self.dense1(x)

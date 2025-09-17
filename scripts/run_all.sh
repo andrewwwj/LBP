@@ -1,12 +1,12 @@
 #!/bin/bash
 export MUJOCO_GL="egl"
 
-RUN_PLANNER=1
-RUN_POLICY=0
+RUN_PLANNER=0
+RUN_POLICY=1
 
 # --- Common Configuration ---
 TASK_NAME="libero_10_wo_task8"
-LOG_DIR="logs/${TASK_NAME}/exp"
+LOG_DIR="logs/${TASK_NAME}/$(date +"%y%m%d")_exp"
 TEMP_DIR=$LOG_DIR
 COUNTER=1
 while [ -d "$LOG_DIR" ]; do
@@ -21,7 +21,7 @@ NUM_WORKERS=8
 PIN_MEMORY=True
 NUM_PROCS=1
 AVAILABLE_GPUS="0"
-BS_TOTAL=128
+BS_TOTAL=64
 BS_PER_PROC=$((BS_TOTAL / NUM_PROCS))
 SAVE_INTERVAL=10000
 LEARNING_RATE=3e-4
@@ -38,31 +38,31 @@ PLANNER_ITER=$((PLANNER_ITER_TOTAL / BS_TOTAL))
 PLANNER_MODEL_NAME="mid_planner_dnce_noise"
 PLANNER_RECURSIVE_STEP=4
 PLANNER_REC_PLAN_COEF=0.5
-PLANNER_EXP_DIR="${LOG_DIR}/$(date +"%m-%d")_${PLANNER_MODEL_NAME}_hor${PLANNER_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
+#PLANNER_EXP_DIR="${LOG_DIR}/${PLANNER_MODEL_NAME}_hor${PLANNER_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
 # -- libero10 --
 #PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/baseline/08-11_mid_planner_dnce_noise_bs64_seed3407"
 # -- libero10-wo-t8 --
-#PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/exp/09-12_mid_planner_dnce_noise_hor4_bs128_seed3407"
+PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/Planner_v1"
 PLANNER_CKPT_PATH="${PLANNER_EXP_DIR}/Model_ckpt_100000.pth"
 
 # --- Policy-Specific Configuration ---
-POLICY_ITER_TOTAL=12800000
+POLICY_ITER_TOTAL=6400000
 POLICY_ITER=$((POLICY_ITER_TOTAL / BS_TOTAL))
 POLICY_MODEL_NAME="lbp_policy_ddpm_res34_libero"
 
 POLICY_RECURSIVE_STEP=2
 CHUNK_LENGTH=6
 USE_AC=True
-POLICY_GUIDANCE="cfg"
+POLICY_GUIDANCE="cg"
 
-DIFFUSION_INPUT_KEY="cvg"
+DIFFUSION_INPUT_KEY="pzg"
 ENERGY_INPUT_KEY="pvg"
 
-POLICY_EXP_DIR="${LOG_DIR}/$(date +"%m-%d")_${POLICY_MODEL_NAME}_hor${POLICY_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
+POLICY_EXP_DIR="${LOG_DIR}/${POLICY_MODEL_NAME}_hor${POLICY_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
 #POLICY_CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/baseline_w_p/08-29_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407/Model_ckpt_100000.pth"
 #EXPERT_POLICY_CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/cfg_w_vg_mask/08-31_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407/Model_ckpt_100000.pth"
 if [ -n "$EXPERT_POLICY_CKPT_PATH" ]; then
-  POLICY_EXP_DIR="${LOG_DIR}/$(date +"%m-%d")_energy_guided_planner_bs${BS_PER_PROC}_seed${SEED}"
+  POLICY_EXP_DIR="${LOG_DIR}/energy_guided_planner_bs${BS_PER_PROC}_seed${SEED}"
   if [ -n "$POLICY_CKPT_PATH" ]; then
     POLICY_ARG="--policy_ckpt_path $POLICY_CKPT_PATH --expert_policy_ckpt_path $EXPERT_POLICY_CKPT_PATH"
   else
