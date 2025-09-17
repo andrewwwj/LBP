@@ -169,6 +169,10 @@ class IKContextExtractor(nn.Module):
         delta_pl_next = self.delta_head(rollout)
         # TODO pl_curr detach?
         pred_pl_next = pl_curr.detach() + delta_pl_next
+        # TODO vl_next 예측도 추가? 동일한 delta_head 사용?
+        # rollout_v = torch.cat([latent_ik, delta_vl], dim=-1)
+        # delta_vl_next = self.delta_head(rollout_v)
+        # pred_vl_next = vl_curr.detach() + delta_vl_next
 
         # ---------------- Representation losses ------------------ #
         if self.training:

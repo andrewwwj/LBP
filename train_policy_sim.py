@@ -34,7 +34,9 @@ def get_args_parser():
     parser.add_argument('--logger_type', default='wandb', help='select wandb or tensorboard')
     parser.add_argument('--output_dir', type=str)
     parser.add_argument('--gpus', default='0,1', help='List of available gpus')
+    parser.add_argument('--action_size', default=7, type=int)
     parser.add_argument('--chunk_length', default=6, type=int) # shared by engine and model
+    parser.add_argument('--proprio_dim', default=9, type=int)
     parser.add_argument('--recursive_step', default=1, type=int) # shared by engine and model
     parser.add_argument('--rec_plan_coef', default=0.5, type=float)
 

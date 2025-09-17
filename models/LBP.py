@@ -12,15 +12,11 @@ class LBPPolicy(nn.Module):
     def __init__(
         self,
         imaginator_ckpt_path = None,
-        proprio_input_dim = 9,
-        proprio_hidden_dim = 32,
-        vision_backbone_name: str = "resnet34",
+        # proprio_hidden_dim = 32,
+        # vision_backbone_name: str = "resnet34",
         policy_num_blocks = 3,
         policy_hidden_dim = 256,
         latent_dim=1024,
-        p_goal_dim=512,
-        action_size = 7,
-        chunk_length = 4,
         num_views = 2,
         decoder_head = 'base',
         loss_func = nn.MSELoss,
@@ -40,12 +36,12 @@ class LBPPolicy(nn.Module):
         self.recursive_step = recursive_step
         self.num_views = num_views  # image views
         self.latent_dim = latent_dim
-        self.p_goal_dim = p_goal_dim
-        self.action_size = action_size
-        self.chunk_length = chunk_length
+        self.action_size = kwargs.get('action_size')
+        self.chunk_length = kwargs.get('chunk_length')
+        self.proprio_dim = kwargs.get('proprio_dim')
         # condition encoder
         state_dict = torch.load(imaginator_ckpt_path, map_location='cpu', weights_only=True)
-        self.imaginator = mid_planner_dnce_noise(recursive_step=recursive_step, chunk_length=chunk_length, p_goal_dim=p_goal_dim, **kwargs)
+        self.imaginator = mid_planner_dnce_noise(recursive_step=recursive_step, **kwargs)
         self.imaginator.load_state_dict(state_dict, strict=True)  # load trained planner
         self.imaginator.eval()
         self.imaginator.requires_grad_(False)  # Freeze pre-trained planner
@@ -79,24 +75,24 @@ class LBPPolicy(nn.Module):
         self.vision_dim = 512 * self.num_views  # self.vision_encoder.vision_dim * self.num_views
 
         # Proprio
-        self.proprio_dim = proprio_input_dim
+        self.proprio_dim = self.proprio_dim
 
         # action decoder
         self.decoder_head = decoder_head
         if decoder_head == 'base':
             self.head = BaseHead(num_blocks=policy_num_blocks, input_dim=self.vision_dim + self.proprio_dim + self.latent_dim,
-                                hidden_dim=policy_hidden_dim, action_size=action_size * chunk_length)
+                                hidden_dim=policy_hidden_dim, action_size=self.action_size * self.chunk_length)
         elif decoder_head == 'ddpm':
             self.head = DDPMHead(
                 num_blocks=policy_num_blocks,
                 pvg_dim=self.proprio_dim + self.vision_dim + self.latent_dim,
                 hidden_dim=policy_hidden_dim,
-                action_size=action_size * chunk_length,
+                action_size=self.action_size * self.chunk_length,
                 guidance_mode=kwargs['guidance_mode'],
                 proprio_dim=self.proprio_dim,
                 vis_lang_dim=self.vision_dim,
                 latent_goal_dim=self.latent_dim,
-                p_goal_dim=self.p_goal_dim,
+                p_goal_dim=self.imaginator.p_goal_dim,
                 proprio_goal_dim=self.latent_dim,
                 diffusion_input_key=diffusion_input_key,
                 energy_input_key=energy_input_key,
@@ -141,8 +137,10 @@ class LBPPolicy(nn.Module):
 
         instruction = kwargs["instruction"]
         image_history = kwargs['images_history']
+        proprios_history = kwargs['proprios_history']        # [B, T, P]
+        prev_action = kwargs['prev_action']                  # [B, A]
 
-        subgoals, p_subgoal, details = self.imaginator.generate(image_history, instruction, self.recursive_step)
+        subgoals, p_subgoal, details = self.imaginator.generate(image_history, instruction, self.recursive_step, proprios_history, prev_action)
         z0 = details['img_latent']
         fused_goal = self.goal_fusion(z0.unsqueeze(1), subgoals).squeeze(1)
 
@@ -174,19 +172,19 @@ class LBPPolicy(nn.Module):
     #         loss = self.head(all_obs, cur_actions)
     #         return loss
 
-    def generate_head(self, all_obs):
-        if self.decoder_head == 'base':
-            return self.head.generate(all_obs)
-        elif self.decoder_head == 'ddpm':
-            return self.head.generate(all_obs)
+    # def generate_head(self, all_obs):
+    #     if self.decoder_head == 'base':
+    #         return self.head.generate(all_obs)
+    #     elif self.decoder_head == 'ddpm':
+    #         return self.head.generate(all_obs)
 
-def lbp_policy_ddpm_res18_libero(imaginator_ckpt_path, chunk_length=6, recursive_step=2, **kwargs):
-    return LBPPolicy(proprio_input_dim=9, proprio_hidden_dim=32, vision_backbone_name="resnet18", decoder_head='ddpm',
+def lbp_policy_ddpm_res18_libero(imaginator_ckpt_path, recursive_step=2, **kwargs):
+    return LBPPolicy(vision_backbone_name="resnet18", decoder_head='ddpm',
                     num_attn_layers=3, recursive_step=recursive_step, imaginator_ckpt_path=imaginator_ckpt_path,
-                    policy_num_blocks=3, policy_hidden_dim=256, action_size=7, chunk_length=chunk_length, **kwargs)
+                    policy_num_blocks=3, policy_hidden_dim=256, **kwargs)
 
 
-def lbp_policy_ddpm_res34_libero(imaginator_ckpt_path, chunk_length=6, recursive_step=2, **kwargs):
-    return LBPPolicy(proprio_input_dim=9, proprio_hidden_dim=32, vision_backbone_name="resnet34", decoder_head='ddpm',
+def lbp_policy_ddpm_res34_libero(imaginator_ckpt_path, recursive_step=2, **kwargs):
+    return LBPPolicy(vision_backbone_name="resnet34", decoder_head='ddpm',
                     num_attn_layers=3, recursive_step=recursive_step, imaginator_ckpt_path=imaginator_ckpt_path,
-                    policy_num_blocks=3, policy_hidden_dim=256, action_size=7, chunk_length=chunk_length, **kwargs)
+                    policy_num_blocks=3, policy_hidden_dim=256, **kwargs)

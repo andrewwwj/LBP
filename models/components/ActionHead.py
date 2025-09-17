@@ -340,8 +340,8 @@ class DDPMHead(nn.Module):
 
     @torch.no_grad()
     def generate(self, all_obs):
-        vl_semantics, proprio_obs, fused_goal, context = all_obs
-        modality_dict = {'c': context, 'v': vl_semantics, 'p': proprio_obs, 'g': fused_goal, }
+        vl_semantics, proprio_obs, fused_goal, p_goal = all_obs
+        modality_dict = {'p': proprio_obs, 'z': p_goal, 'v': vl_semantics, 'g': fused_goal, }
         diffusion_obs = torch.cat([modality_dict[key] for key in self.diffusion_input_key], dim=-1)
         B = diffusion_obs.shape[0]
         # Sample noise action

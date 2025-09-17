@@ -301,12 +301,13 @@ class LiberoAgent(object):
         actions[..., -1] = np.sign(actions[..., -1])
         return actions
 
-    def get_action(self, agent_view_images, wrist_view_images, raw_proprio, instruction, t=-1):
+    def get_action(self, agent_view_images, wrist_view_images, raw_proprio, instruction, t):
         # agent_view_images B H W 3
         # wrist_view_images B H W 3
         # raw_proprio B 9
         # instruction ['xxx', ..., 'xxx']
-
+        # Accept external proprio history threading
+ 
         # Update history buffers
         if t <= 0 or len(self.agent_view_history) == 0:  # First step or reset
             # Initialize history with repeated first frame
@@ -363,8 +364,7 @@ class LiberoAgent(object):
         }
         actions, _ = self.policy.generate(**batch)
         # Update prev_action for the next step
-        self.prev_action = actions.detach().clone()
-
+        self.prev_action = actions  # use raw generated actions as training
         actions = self.processor.postprocess_action(actions)
         if self.use_ac:
             assert t >= 0, f"Invalid value for t: {t}. In action chunking, t must be equal to current rollout step."
@@ -563,7 +563,6 @@ class LIBEROEval():
             eef_quat = obs['robot0_eef_quat']
             agent_view = np.flip(np.flip(obs['agentview_image'], 1), 2)
             wrist_view = obs['robot0_eye_in_hand_image']
-            # TODO implement proprio history
             proprios = np.concatenate([gripper_qpos, eef_pos, eef_quat], axis=-1)
             lang_instruction = [lang] * self.num_episodes
             # get action

@@ -99,9 +99,11 @@ class MidImaginator(nn.Module):
     def __init__(
             self,
             action_size=7,
+            action_chunk_length=6,
+            proprio_dim=9,
             latent_dim=1024,
             hidden_dim=512,
-            p_goal_dim=1024,
+            p_goal_dim=512,
             recursive_step=4,
             state_random_noise=True,
             state_noise_strength=0.1,
@@ -112,6 +114,7 @@ class MidImaginator(nn.Module):
     ):
         super().__init__()
         self.vl_latent_dim = latent_dim
+        self.p_goal_dim = p_goal_dim
         self.recursive_step = recursive_step
         self.state_random_noise = state_random_noise
         self.state_noise_strength = state_noise_strength
@@ -120,14 +123,12 @@ class MidImaginator(nn.Module):
         self.goal_rec = DualPathPredictor(latent_dim=self.vl_latent_dim, output_dim=self.vl_latent_dim)
         self.latent_planner = TriplePathPredictor(latent_dim=latent_dim, output_dim=self.vl_latent_dim)
         # ---- IK training components ----
-        self.action_size = action_size
-        self.chunk_length = kwargs.get('chunk_length')
         self.ik_func = IKContextExtractor(
-            proprio_dim=kwargs.get('proprio_dim', 9),
+            proprio_dim=proprio_dim,
             vl_dim=self.vl_latent_dim,
             hidden_dim=hidden_dim,
             p_goal_dim=p_goal_dim,
-            action_dim=self.action_size * self.chunk_length,
+            action_dim=action_size * action_chunk_length,
             num_latents=128,
         )
 
@@ -229,10 +230,11 @@ class MidImaginator(nn.Module):
 
 
 def mid_planner_dnce_noise(recursive_step=4, **kwargs):
-    return MidImaginator(recursive_step=recursive_step,
+    return MidImaginator(action_size=kwargs['action_size'],
+                         action_chunk_length=kwargs['chunk_length'],
+                         recursive_step=recursive_step,
                          state_random_noise=True,
                          state_noise_strength=0.1,
                          loss_func=nn.MSELoss,
                          loss_func_conig=dict(reduction='mean'),
-                         latent_info_file='assets/libero.pkl',
-                         **kwargs)
+                         latent_info_file='assets/libero.pkl',)
