@@ -86,20 +86,27 @@ class IKContextExtractor(nn.Module):
         self.mod_embed = nn.Parameter(torch.randn(2, hidden_dim))
 
         # IK solver
-        self.vision_IK = FilmMLP(input_dim=hidden_dim, cond_dim=hidden_dim, output_size=hidden_dim)
-        self.proprio_IK = FilmMLP(input_dim=hidden_dim, cond_dim=hidden_dim, output_size=hidden_dim)
-        # TODO FiLM 성능 안좋으면 cross-attention 시도
-        # self.proprio_IK = CrossAttnBlock(embed_dim=hidden_dim,
-        #                                  dim_feedforward=hidden_dim * 4,
-        #                                  num_layers=1)
-        # self.vision_IK = CrossAttnBlock(embed_dim=hidden_dim,
-        #                                  dim_feedforward=hidden_dim * 4,
-        #                                  num_layers=1)
+        # FiLM
+        # self.vision_IK = FilmMLP(input_dim=hidden_dim, cond_dim=hidden_dim, output_size=hidden_dim)
+        # self.proprio_IK = FilmMLP(input_dim=hidden_dim, cond_dim=hidden_dim, output_size=hidden_dim)
+
+        # Cross-attention
+        self.proprio_IK = CrossAttnBlock(embed_dim=hidden_dim,
+                                         dim_feedforward=hidden_dim * 4,
+                                         num_heads=num_p_tokens,
+                                         num_layers=1)
+        self.vision_IK = CrossAttnBlock(embed_dim=hidden_dim,
+                                        dim_feedforward=hidden_dim * 4,
+                                        num_heads=num_v_tokens,
+                                        num_layers=1)
+
         self.cross_attn = CrossAttnBlock(embed_dim=hidden_dim,
                                          dim_feedforward=hidden_dim * 4,
-                                         num_layers=1)
+                                         num_heads=8,
+                                         num_layers=3)
         self.out_cross = CrossAttnBlock(embed_dim=hidden_dim,
                                         dim_feedforward=hidden_dim * 2,
+                                        num_heads=8,
                                         num_layers=1)
         # TODO 학습 불안정 -> tanh 추가
         self.delta_head = nn.Sequential(
@@ -150,9 +157,13 @@ class IKContextExtractor(nn.Module):
         v_tokens = v_tokens + v_pos + self.mod_embed[1]
 
         # IK for each modality
-        # TODO FiLM 성능 안좋으면 cross-attention 시도
-        p_ik = self.proprio_IK(p_tokens, a_prev)  # [B, Np, D]
-        v_ik = self.vision_IK(v_tokens, a_prev)  # [B, Nv, D]
+        # 1) FiLM
+        # p_ik = self.proprio_IK(p_tokens, a_prev)  # [B, Np, D]
+        # v_ik = self.vision_IK(v_tokens, a_prev)  # [B, Nv, D]
+
+        # 2) Cross-attention
+        p_ik = self.proprio_IK(p_tokens, a_prev.unsqueeze(1))  # [B, Np, D]
+        v_ik = self.vision_IK(v_tokens, a_prev.unsqueeze(1))  # [B, Nv, D]
 
         # Perceiver-IO: Q = learned latent array; KV = [pl_tokens, vl_tokens]
         # TODO q_latents 와 q_out 의 의미?

@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -15,12 +16,26 @@ class CrossAttnLayer(nn.Module):
         self.dropout2 = nn.Dropout(drop_out_rate)
         self.dropout3 = nn.Dropout(drop_out_rate)
 
-    def forward(self, x, y):
-        attn_output, attn_weights = self.attn(x, y, y)
+    def forward(self, x, y, return_attn_weights: bool = False, prefer_flash: bool = True):
+        """
+        x: [B, Tq, D], y: [B, Tk, D]
+        - When return_attn_weights=False (default), we disable weight computation to
+          unlock SDPA fastpath and reduce memory/time.
+        - prefer_flash: if True and on CUDA, prefer Flash/MemEfficient SDPA kernels.
+        """
+        if prefer_flash:
+            # Prefer Flash/MemEfficient kernels (requires no mask, dropout=0, fp16/bf16 recommended)
+            # Fallback to math kernel is disabled here to surface incompatibilities early.
+            with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_mem_efficient=True, enable_math=False):
+                attn_output, attn_weights = self.attn(x, y, y, need_weights=return_attn_weights)
+        else:
+            attn_output, attn_weights = self.attn(x, y, y, need_weights=return_attn_weights)
+
         x = self.norm1(x + self.dropout1(attn_output))
         x = self.norm2(x + self.dropout3(self.linear2(self.dropout2(self.activation(self.linear1(x))))))
-        return x, attn_weights
-        
+        return (x, attn_weights) if return_attn_weights else (x, None)
+
+
 class CrossAttnBlock(nn.Module):
     def __init__(self, embed_dim=1024, dim_feedforward=2048, num_heads=8, num_layers=3, activation=F.gelu ,drop_out_rate=0.):
         super(CrossAttnBlock, self).__init__()
@@ -35,11 +50,14 @@ class CrossAttnBlock(nn.Module):
             for i in range(num_layers)
         ])
     
-    def forward(self, x, y, return_attn_weights=False):
+    def forward(self, x, y, return_attn_weights: bool = False, prefer_flash: bool = True):
+        last_attn = None
         for layer in self.layers:
-            x, attn_weights = layer(x,y)
+            x, attn_weights = layer(x, y, return_attn_weights=return_attn_weights, prefer_flash=prefer_flash)
+            if return_attn_weights:
+                last_attn = attn_weights
         
         if return_attn_weights:
-            return x, attn_weights
+            return x, last_attn
         else :
             return x
