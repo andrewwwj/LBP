@@ -100,6 +100,7 @@ class MidImaginator(nn.Module):
             self,
             action_size=7,
             latent_dim=1024,
+            p_goal_dim=1024,
             recursive_step=4,
             state_random_noise=True,
             state_noise_strength=0.1,
@@ -120,11 +121,11 @@ class MidImaginator(nn.Module):
         # ---- IK training components ----
         self.action_size = action_size
         self.chunk_length = kwargs.get('chunk_length')
-        self.p_goal_dim = kwargs.get('p_goal_dim')
+        self.p_goal_dim = p_goal_dim
         self.ik_func = IKContextExtractor(
             proprio_dim=kwargs.get('proprio_dim', 9),
             vl_dim=self.vl_latent_dim,
-            hidden_dim=512,
+            hidden_dim=self.vl_latent_dim,
             p_goal_dim=self.p_goal_dim,
             action_dim=self.action_size * self.chunk_length,
             num_latents=128,

@@ -56,13 +56,12 @@ class IKContextExtractor(nn.Module):
     def __init__(self, proprio_dim, vl_dim, hidden_dim, p_goal_dim, action_dim, num_latents=128, action_noise=True,
                  num_heads=8, num_p_tokens=4, num_v_tokens=8,):
         super().__init__()
-        latent_dim = hidden_dim
         self.proprio_dim = proprio_dim
         self.action_dim = action_dim
         self.action_drop_prob = 0.5
         self.action_noise = action_noise
-        self.latent_query = nn.Parameter(torch.randn(1, num_latents, latent_dim))
-        self.output_query = nn.Parameter(torch.randn(1, 1, latent_dim))
+        self.latent_query = nn.Parameter(torch.randn(1, num_latents, hidden_dim))
+        self.output_query = nn.Parameter(torch.randn(1, 1, hidden_dim))
         self.num_v_tokens = num_v_tokens
         self.num_p_tokens = num_p_tokens
 
@@ -72,42 +71,42 @@ class IKContextExtractor(nn.Module):
         self.w_align = 1.0
         self.vision_encoder = FilmMLP(input_dim=vl_dim, cond_dim=vl_dim, output_size=p_goal_dim)
         self.proprio_encoder = FilmMLP(input_dim=proprio_dim, cond_dim=vl_dim, output_size=p_goal_dim)
-        self.action_encoder = MlpResNet(num_blocks=3, input_dim=action_dim, hidden_dim=latent_dim, output_size=p_goal_dim)
+        self.action_encoder = MlpResNet(num_blocks=3, input_dim=action_dim, hidden_dim=hidden_dim, output_size=p_goal_dim)
 
         # Tokenizers
-        self.vision_tokenizer = nn.Linear(latent_dim, num_v_tokens * latent_dim)
-        self.proprio_tokenizer = nn.Linear(latent_dim, num_p_tokens * latent_dim)
-        self.action_tokenizer = nn.Linear(latent_dim, latent_dim)
+        self.vision_tokenizer = nn.Linear(hidden_dim, num_v_tokens * hidden_dim)
+        self.proprio_tokenizer = nn.Linear(hidden_dim, num_p_tokens * hidden_dim)
+        self.action_tokenizer = nn.Linear(hidden_dim, hidden_dim)
 
-        self.ff_pos_p = FourierPositionalEncoding1D(num_bands=6, out_dim=latent_dim)
-        self.ff_pos_v = FourierPositionalEncoding1D(num_bands=6, out_dim=latent_dim)
+        self.ff_pos_p = FourierPositionalEncoding1D(num_bands=6, out_dim=hidden_dim)
+        self.ff_pos_v = FourierPositionalEncoding1D(num_bands=6, out_dim=hidden_dim)
 
         self.register_buffer('p_pos', torch.linspace(0, 1, steps=num_p_tokens).unsqueeze(0), persistent=False)  # [1, Np]
         self.register_buffer('v_pos', torch.linspace(0, 1, steps=num_v_tokens).unsqueeze(0), persistent=False)  # [1, Nv]
-        self.mod_embed = nn.Parameter(torch.randn(2, latent_dim))
+        self.mod_embed = nn.Parameter(torch.randn(2, hidden_dim))
 
         # IK solver
-        self.vision_IK = FilmMLP(input_dim=latent_dim, cond_dim=latent_dim, output_size=latent_dim)
-        self.proprio_IK = FilmMLP(input_dim=latent_dim, cond_dim=latent_dim, output_size=latent_dim)
+        self.vision_IK = FilmMLP(input_dim=hidden_dim, cond_dim=hidden_dim, output_size=hidden_dim)
+        self.proprio_IK = FilmMLP(input_dim=hidden_dim, cond_dim=hidden_dim, output_size=hidden_dim)
         # TODO FiLM 성능 안좋으면 cross-attention 시도
-        # self.proprio_IK = CrossAttnBlock(embed_dim=latent_dim,
-        #                                  dim_feedforward=latent_dim * 4,
+        # self.proprio_IK = CrossAttnBlock(embed_dim=hidden_dim,
+        #                                  dim_feedforward=hidden_dim * 4,
         #                                  num_layers=1)
-        # self.vision_IK = CrossAttnBlock(embed_dim=latent_dim,
-        #                                  dim_feedforward=latent_dim * 4,
+        # self.vision_IK = CrossAttnBlock(embed_dim=hidden_dim,
+        #                                  dim_feedforward=hidden_dim * 4,
         #                                  num_layers=1)
-        self.cross_attn = CrossAttnBlock(embed_dim=latent_dim,
-                                         dim_feedforward=latent_dim * 4,
+        self.cross_attn = CrossAttnBlock(embed_dim=hidden_dim,
+                                         dim_feedforward=hidden_dim * 4,
                                          num_layers=1)
-        self.out_cross = CrossAttnBlock(embed_dim=latent_dim,
-                                        dim_feedforward=latent_dim * 2,
+        self.out_cross = CrossAttnBlock(embed_dim=hidden_dim,
+                                        dim_feedforward=hidden_dim * 2,
                                         num_layers=1)
         # TODO 학습 불안정 -> tanh 추가
         self.delta_head = nn.Sequential(
-            nn.Linear(latent_dim * 2, latent_dim * 4),
+            nn.Linear(hidden_dim * 2, hidden_dim * 4),
             nn.GELU(),
-            nn.LayerNorm(latent_dim * 4),
-            nn.Linear(latent_dim * 4, p_goal_dim)
+            nn.LayerNorm(hidden_dim * 4),
+            nn.Linear(hidden_dim * 4, p_goal_dim)
         )
         self.apply(init_weight)
 

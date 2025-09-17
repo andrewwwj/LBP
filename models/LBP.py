@@ -18,7 +18,7 @@ class LBPPolicy(nn.Module):
         policy_num_blocks = 3,
         policy_hidden_dim = 256,
         latent_dim=1024,
-        p_goal_dim=512,
+        p_goal_dim=1024,
         action_size = 7,
         chunk_length = 4,
         num_views = 2,
