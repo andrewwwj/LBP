@@ -54,7 +54,7 @@ class FourierPositionalEncoding1D(nn.Module):
 class IKContextExtractor(nn.Module):
 
     def __init__(self, proprio_dim, vl_dim, hidden_dim, p_goal_dim, action_dim, num_latents=128, action_noise=True,
-                 num_heads=8, num_p_tokens=4, num_v_tokens=8,):
+                 num_p_tokens=4, num_v_tokens=8,):
         super().__init__()
         self.proprio_dim = proprio_dim
         self.action_dim = action_dim
@@ -69,13 +69,13 @@ class IKContextExtractor(nn.Module):
         self.tau = 0.07
         self.w_nce = 1.0
         self.w_align = 1.0
-        self.vision_encoder = FilmMLP(input_dim=vl_dim, cond_dim=vl_dim, output_size=p_goal_dim)
         self.proprio_encoder = FilmMLP(input_dim=proprio_dim, cond_dim=vl_dim, output_size=p_goal_dim)
-        self.action_encoder = MlpResNet(num_blocks=3, input_dim=action_dim, hidden_dim=hidden_dim, output_size=p_goal_dim)
+        self.vision_encoder = FilmMLP(input_dim=vl_dim, cond_dim=vl_dim, output_size=hidden_dim)
+        self.action_encoder = MlpResNet(num_blocks=3, input_dim=action_dim, hidden_dim=hidden_dim, output_size=hidden_dim)
 
         # Tokenizers
+        self.proprio_tokenizer = nn.Linear(p_goal_dim, num_p_tokens * hidden_dim)
         self.vision_tokenizer = nn.Linear(hidden_dim, num_v_tokens * hidden_dim)
-        self.proprio_tokenizer = nn.Linear(hidden_dim, num_p_tokens * hidden_dim)
         self.action_tokenizer = nn.Linear(hidden_dim, hidden_dim)
 
         self.ff_pos_p = FourierPositionalEncoding1D(num_bands=6, out_dim=hidden_dim)
@@ -103,7 +103,7 @@ class IKContextExtractor(nn.Module):
                                         num_layers=1)
         # TODO 학습 불안정 -> tanh 추가
         self.delta_head = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim * 4),
+            nn.Linear(hidden_dim + p_goal_dim, hidden_dim * 4),
             nn.GELU(),
             nn.LayerNorm(hidden_dim * 4),
             nn.Linear(hidden_dim * 4, p_goal_dim)
@@ -168,7 +168,7 @@ class IKContextExtractor(nn.Module):
         rollout = torch.cat([latent_ik, delta_pl], dim=-1)
         delta_pl_next = self.delta_head(rollout)
         # TODO pl_curr detach?
-        pred_pl_next = pl_curr + delta_pl_next
+        pred_pl_next = pl_curr.detach() + delta_pl_next
 
         # ---------------- Representation losses ------------------ #
         if self.training:
