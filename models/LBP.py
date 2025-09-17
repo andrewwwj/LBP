@@ -56,8 +56,8 @@ class LBPPolicy(nn.Module):
         #     self.imaginator.latent_proj.noise_scale.requires_grad_(True)
         policy_dict = {}
         if expert_policy_ckpt_path and expert_policy_config:
-            expert_policy_ckpt = create_model(**expert_policy_config)
             state_dict = torch.load(expert_policy_ckpt_path, map_location='cpu', wweights_only=True)
+            expert_policy_ckpt = create_model(**expert_policy_config)
             expert_policy_ckpt.load_state_dict(state_dict, strict=True)
             expert_policy_ckpt.eval()
             expert_policy_ckpt.requires_grad_(False)  # Freeze pre-trained expert diffusion model
@@ -109,8 +109,7 @@ class LBPPolicy(nn.Module):
 
     def train(self, mode: bool = True):
         super().train(mode)
-        self.imaginator.eval()
-        # TODO Freeze expert/student policy either
+        self.imaginator.eval()  # keep imaginator in eval mode
         return self
 
     def forward(self, cur_images, cur_proprios, cur_actions, **kwargs):
@@ -142,9 +141,8 @@ class LBPPolicy(nn.Module):
 
         instruction = kwargs["instruction"]
         image_history = kwargs['images_history']
-        with torch.inference_mode():
-            self.imaginator.eval()
-            subgoals, p_subgoal, details = self.imaginator.generate(image_history, instruction, self.recursive_step)
+
+        subgoals, p_subgoal, details = self.imaginator.generate(image_history, instruction, self.recursive_step)
         z0 = details['img_latent']
         fused_goal = self.goal_fusion(z0.unsqueeze(1), subgoals).squeeze(1)
 

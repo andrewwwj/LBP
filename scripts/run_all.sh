@@ -21,7 +21,7 @@ NUM_WORKERS=8
 PIN_MEMORY=True
 NUM_PROCS=1
 AVAILABLE_GPUS="0"
-BS_TOTAL=64
+BS_TOTAL=256
 BS_PER_PROC=$((BS_TOTAL / NUM_PROCS))
 SAVE_INTERVAL=10000
 LEARNING_RATE=3e-4
@@ -46,7 +46,7 @@ PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task
 PLANNER_CKPT_PATH="${PLANNER_EXP_DIR}/Model_ckpt_100000.pth"
 
 # --- Policy-Specific Configuration ---
-POLICY_ITER_TOTAL=6400000
+POLICY_ITER_TOTAL=12800000
 POLICY_ITER=$((POLICY_ITER_TOTAL / BS_TOTAL))
 POLICY_MODEL_NAME="lbp_policy_ddpm_res34_libero"
 
@@ -75,7 +75,9 @@ else
 fi
 
 # Set up log directory
-mkdir -p $LOG_DIR
+mkdir -p "$LOG_DIR"
+mkdir -p "$PLANNER_EXP_DIR"
+mkdir -p "$POLICY_EXP_DIR"
 cp "./models/components/ActionHead.py" "$LOG_DIR/"
 cp "./models/MidPlanner.py" "$LOG_DIR/"
 cp "./models/LBP.py" "$LOG_DIR/"

@@ -32,7 +32,7 @@ def get_args_parser():
     # Base Setting (shared or essential)
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--logger_type', default='wandb', help='select wandb or tensorboard')
-    parser.add_argument('--output_dir', default='runnings/')
+    parser.add_argument('--output_dir', type=str)
     parser.add_argument('--gpus', default='0,1', help='List of available gpus')
     parser.add_argument('--chunk_length', default=6, type=int) # shared by engine and model
     parser.add_argument('--recursive_step', default=1, type=int) # shared by engine and model
@@ -184,11 +184,7 @@ def main(config):
         with open(config_path, 'r') as f:
             policy_config = json.load(f)
         config['expert_policy_config'] = policy_config
-    # counter = 1
-    # base_path = config['output_dir']
-    # while os.path.exists(config['output_dir']):
-    #     config['output_dir'] = f"{base_path}_exp{counter}"
-    #     counter += 1
+
     logger = Logger(**config)
     logger.log_msg_every("init env ok")
     logger.log_msg_every(f"current device is: {torch.cuda.current_device()}")
