@@ -158,24 +158,22 @@ class LiberoDataset(Dataset):
             for view in self.views:
                 raw_img = cv2.imdecode(observations[view][hist_idx], cv2.IMREAD_COLOR)
                 view_images.append(raw_img)
-                # Visualize the image
+                # # Visualize the image
                 # import matplotlib.pyplot as plt
                 # img_rgb = cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB)
                 # plt.figure(figsize=(8, 8))
                 # plt.imshow(img_rgb); plt.axis('off'); plt.show()
             raw_image_history.append(view_images)
 
-        # Current frame is the last in history
-        # raw_images = raw_images_history[-1]
-
         # load subgoals
         # TODO Load goal proprios as well as goal images
+        # Subgoals: Move rec_plan_coef * dist(goal-current) from cur_idx
+        # i.e., s0, sg1, sg2, sg3, sg -> subgoals=[sg3, sg2, sg1]
         subgoals = []
         for i in range(self.recursive_step):
-            # Move rec_plan_coef * dist(goal-current) from cur_idx => Backward approach to current idx
             raw_img = cv2.imdecode(observations[self.main_view][goal_idx], cv2.IMREAD_COLOR)
             subgoals.append(raw_img)
-            goal_idx = cur_idx + int((goal_idx - cur_idx) * self.rec_plan_coef)
+            goal_idx = cur_idx + int((goal_idx - cur_idx) * self.rec_plan_coef)  # goal_idx decreases
         # load actions with chunking
         np_action_history = []
         for idx in history_indices:
@@ -185,8 +183,11 @@ class LiberoDataset(Dataset):
                 padding = np.array([[0., 0., 0., 0., 0., 0., np_action[-1][-1]]]).repeat(cnt, axis=0)
                 np_action = np.concatenate([np_action, padding], axis=0)
             np_action_history.append(np_action)
-        prev_action = np_action_history[-2]
         cur_action = np_action_history[-1]
+        if cur_idx < self.chunk_length:
+            prev_action = np.tile(np.array([0., 0., 0., 0., 0., 0., -1.], dtype=np.float32),  (self.chunk_length, 1))
+        else:
+            prev_action = np_action_history[-2]
 
         # Load proprioceptive history
         raw_proprio_history = [f['proprio'][()][hist_idx] for hist_idx in history_indices]
@@ -286,7 +287,8 @@ class LiberoAgent(object):
         self.wrist_view_history = []
         self.proprio_history = []
         self.action_history = []
-        self.prev_action = torch.zeros((1, self.action_size * self.chunk_length))
+        init_prev = torch.tensor([0., 0., 0., 0., 0., 0., -1.], dtype=torch.float32).repeat(self.chunk_length).unsqueeze(0)
+        self.prev_action = init_prev.repeat(num_samples, 1)
 
     @torch.no_grad()
     def get_ac_action(self, actions, t: int, k: float=0.25):
@@ -354,6 +356,12 @@ class LiberoAgent(object):
         images_history = torch.stack(images_history, dim=1)  # [B, T, V, C, H, W]
         proprios_history = torch.stack(proprio_history_processed, dim=1)  # [B, history_length, proprio_dim]
 
+        B = final_proprio.shape[0]
+        if self.prev_action.dim() == 1:
+            self.prev_action = self.prev_action.unsqueeze(0)
+        if self.prev_action.shape[0] != B:
+            self.prev_action = self.prev_action[:1].repeat(B, 1)
+
         batch = {
             'cur_images': final_images,
             'cur_proprios': final_proprio,
@@ -363,8 +371,9 @@ class LiberoAgent(object):
             'prev_action': self.prev_action
         }
         actions, _ = self.policy.generate(**batch)
-        # Update prev_action for the next step
         self.prev_action = actions  # use raw generated actions as training
+
+        # Retrieve raw actions (policy generates normalized actions as it learned that way)
         actions = self.processor.postprocess_action(actions)
         if self.use_ac:
             assert t >= 0, f"Invalid value for t: {t}. In action chunking, t must be equal to current rollout step."
@@ -486,9 +495,7 @@ class LIBEROEval():
 
         # init the subprocess vector environment
         env_num = self.num_episodes
-        env = SubprocVectorEnv(
-            [lambda: OffScreenRenderEnv(**env_args) for _ in range(env_num)]
-        )
+        env = SubprocVectorEnv([lambda: OffScreenRenderEnv(**env_args) for _ in range(env_num)])
 
         # environment reset
         env.seed(self.seed + 100)
@@ -563,6 +570,10 @@ class LIBEROEval():
             eef_quat = obs['robot0_eef_quat']
             agent_view = np.flip(np.flip(obs['agentview_image'], 1), 2)
             wrist_view = obs['robot0_eye_in_hand_image']
+            # import matplotlib.pyplot as plt
+            # img_rgb = obs['robot0_eye_in_hand_image'][0]
+            # plt.figure(figsize=(8, 8))
+            # plt.imshow(img_rgb); plt.axis('off'); plt.show()
             proprios = np.concatenate([gripper_qpos, eef_pos, eef_quat], axis=-1)
             lang_instruction = [lang] * self.num_episodes
             # get action

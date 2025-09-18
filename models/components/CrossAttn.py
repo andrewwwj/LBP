@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.attention import sdpa_kernel, SDPBackend
 
 class CrossAttnLayer(nn.Module):
-    def __init__(self, embed_dim=1024, dim_feedforward=2048, num_heads=8, 
-                 activation=F.gelu ,drop_out_rate=0.):
+    def __init__(self, embed_dim=1024, dim_feedforward=2048, num_heads=8, activation=F.gelu ,drop_out_rate=0.):
         super(CrossAttnLayer, self).__init__()
         self.attn = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads, batch_first=True)
         self.linear1 = nn.Linear(embed_dim, dim_feedforward)
@@ -16,17 +16,9 @@ class CrossAttnLayer(nn.Module):
         self.dropout2 = nn.Dropout(drop_out_rate)
         self.dropout3 = nn.Dropout(drop_out_rate)
 
-    def forward(self, x, y, return_attn_weights: bool = False, prefer_flash: bool = True):
-        """
-        x: [B, Tq, D], y: [B, Tk, D]
-        - When return_attn_weights=False (default), we disable weight computation to
-          unlock SDPA fastpath and reduce memory/time.
-        - prefer_flash: if True and on CUDA, prefer Flash/MemEfficient SDPA kernels.
-        """
+    def forward(self, x, y, return_attn_weights, prefer_flash):
         if prefer_flash:
-            # Prefer Flash/MemEfficient kernels (requires no mask, dropout=0, fp16/bf16 recommended)
-            # Fallback to math kernel is disabled here to surface incompatibilities early.
-            with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_mem_efficient=True, enable_math=False):
+            with sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
                 attn_output, attn_weights = self.attn(x, y, y, need_weights=return_attn_weights)
         else:
             attn_output, attn_weights = self.attn(x, y, y, need_weights=return_attn_weights)

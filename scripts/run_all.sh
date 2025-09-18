@@ -1,8 +1,8 @@
 #!/bin/bash
 export MUJOCO_GL="egl"
 
-RUN_PLANNER=0
-RUN_POLICY=1
+RUN_PLANNER=1
+RUN_POLICY=0
 
 # --- Common Configuration ---
 TASK_NAME="libero_10_wo_task8"
@@ -21,7 +21,7 @@ NUM_WORKERS=8
 PIN_MEMORY=True
 NUM_PROCS=1
 AVAILABLE_GPUS="0"
-BS_TOTAL=256
+BS_TOTAL=128
 BS_PER_PROC=$((BS_TOTAL / NUM_PROCS))
 SAVE_INTERVAL=10000
 LEARNING_RATE=3e-4
@@ -38,11 +38,11 @@ PLANNER_ITER=$((PLANNER_ITER_TOTAL / BS_TOTAL))
 PLANNER_MODEL_NAME="mid_planner_dnce_noise"
 PLANNER_RECURSIVE_STEP=4
 PLANNER_REC_PLAN_COEF=0.5
-#PLANNER_EXP_DIR="${LOG_DIR}/${PLANNER_MODEL_NAME}_hor${PLANNER_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
+PLANNER_EXP_DIR="${LOG_DIR}/${PLANNER_MODEL_NAME}_hor${PLANNER_RECURSIVE_STEP}_bs${BS_PER_PROC}_seed${SEED}"
 # -- libero10 --
 #PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10/baseline/08-11_mid_planner_dnce_noise_bs64_seed3407"
 # -- libero10-wo-t8 --
-PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/Planner_v1"
+#PLANNER_EXP_DIR="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/Planner_v1"
 PLANNER_CKPT_PATH="${PLANNER_EXP_DIR}/Model_ckpt_100000.pth"
 
 # --- Policy-Specific Configuration ---
@@ -76,21 +76,27 @@ fi
 
 # Set up log directory
 mkdir -p "$LOG_DIR"
-mkdir -p "$PLANNER_EXP_DIR"
-mkdir -p "$POLICY_EXP_DIR"
 cp "./models/components/ActionHead.py" "$LOG_DIR/"
-cp "./models/MidPlanner.py" "$LOG_DIR/"
-cp "./models/LBP.py" "$LOG_DIR/"
-cp "./models/components/MetaTask.py" "$LOG_DIR/"
+if [ $RUN_PLANNER = 1 ]; then
+  mkdir -p "$PLANNER_EXP_DIR"
+  cp "./models/MidPlanner.py" "$LOG_DIR/"
+  cp "./models/components/MetaTask.py" "$LOG_DIR/"
+fi
+if [ $RUN_POLICY = 1 ]; then
+  mkdir -p "$POLICY_EXP_DIR"
+  cp "./models/LBP.py" "$LOG_DIR/"
+  cp "./models/components/ActionHead.py" "$LOG_DIR/"
+fi
 touch "$LOG_DIR/train_info.txt"
 
 # 1) Train planner
 if [ $RUN_PLANNER = 1 ]; then
   echo
   echo "======================================================"
-  echo "Running planner script..."
-  echo "Planner Checkpoint: ${PLANNER_EXP_DIR}"
+  echo "  Running planner script..."
+  echo "  Planner Checkpoint: ${PLANNER_EXP_DIR}"
   echo "======================================================"
+  echo
 #  PORT=26501
 #  torchrun \
 #      --nproc_per_node=${NUM_PROCS} \
@@ -131,11 +137,12 @@ fi
 if [ $RUN_POLICY = 1 ]; then
   echo
   echo "======================================================"
-  echo "Running policy script..."
-  echo "Planner Checkpoint: ${PLANNER_EXP_DIR}/${PLANNER_CKPT}"
-  echo "Policy Checkpoint: ${POLICY_EXP_DIR}"
-  echo "Guidance: ${POLICY_GUIDANCE}"
+  echo "  Running policy script..."
+  echo "  Planner Checkpoint: ${PLANNER_EXP_DIR}/${PLANNER_CKPT}"
+  echo "  Policy Checkpoint: ${POLICY_EXP_DIR}"
+  echo "  Guidance: ${POLICY_GUIDANCE}"
   echo "======================================================"
+  echo
 #  PORT=26501
 #  torchrun \
 #      --nproc_per_node=${NUM_PROCS} \

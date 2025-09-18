@@ -114,6 +114,7 @@ def train(config, logger, model, train_loader, optimizer, lr_scheduler):
         loss, loss_metric = model(**batch)
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         lr_scheduler.step()
         loss_recod.update(loss.item())

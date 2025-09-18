@@ -15,8 +15,10 @@ DATA_PATH="/home/andrew/pyprojects/datasets/libero_10"
 #CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/exp1/08-31_energy_guided_planner_bs64_seed3407"  # energy w/ p anchor + vg energy
 # CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/exp3/09-03_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407"  # CFG w/ randn embedding
 #CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/cfg_mask_vg/08-31_lbp_policy_ddpm_res34_libero_hor2_bs64_seed3407"  # CFG w/ mask vg only
-CKPT_PATH="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/exp2/09-13_lbp_policy_ddpm_res34_libero_hor2_bs128_seed3407"
+CKPT_BASE="/home/andrew/pyprojects/GenerativeRL/LBP/logs/libero_10_wo_task8/250917_exp"
+CKPT_PATH="$CKPT_BASE/lbp_policy_ddpm_res34_libero_hor2_bs128_seed3407"
 
+echo
 echo "Start Evaluation..."
 echo
 echo "======================================================"
@@ -24,6 +26,7 @@ echo "Checkpoint Path: ${CKPT_PATH}"
 echo "GPU: ${AVAILABLE_GPUS}"
 echo "Task Name: ${TASK_NAME}"
 echo "======================================================"
+echo
 #W_CFG_LIST=(0 1.0 2.0 3.0)
 EVAL_NUM=1
 for i in $(seq 1 $EVAL_NUM); do
@@ -33,7 +36,8 @@ for i in $(seq 1 $EVAL_NUM); do
         --gpu $AVAILABLE_GPUS \
         --dataset_path $DATA_PATH \
         --ckpt_path $CKPT_PATH \
-        --task_name $TASK_NAME
+        --task_name $TASK_NAME \
+        --code_override_dir $CKPT_BASE
 done
 echo "======================================================"
 echo "Evaluation Finished"
