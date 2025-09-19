@@ -144,7 +144,6 @@ class MidImaginator(nn.Module):
             hidden_dim=hidden_dim,
             p_goal_dim=p_goal_dim,
             action_dim=action_size * action_chunk_length,
-            num_latents=128,
         )
 
     def forward(self, cur_images, instruction, sub_goals, **kwargs):
@@ -154,7 +153,7 @@ class MidImaginator(nn.Module):
         proprios_history = kwargs['proprios_history']        # [B, T, P]
         prev_action = kwargs['prev_action']                  # [B, A]
         proprio_next = kwargs['next_proprio']                # [B, V, C, H, W]
-        # image_next = kwargs['next_image']
+        image_next = kwargs['next_image']
 
         s0 = self.latent_proj.img_proj(cur_images[:, 0, ...], view='main')
         sg = self.latent_proj.lang_proj(instruction)
@@ -214,7 +213,7 @@ class MidImaginator(nn.Module):
             p_history=proprios_history,
             p_next=proprio_next,
             img_history=img_latent_history,
-            # v_next=self.latent_proj.img_proj(image_next[:, 0, ...]),
+            v_next=self.latent_proj.img_proj(image_next[:, 0, ...]),
             subgoal=nearest_subgoal,
             prev_action=prev_action
         )

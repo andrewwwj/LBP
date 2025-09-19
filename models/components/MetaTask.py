@@ -1,4 +1,5 @@
 import math
+import copy
 from einops import rearrange, repeat
 import torch
 import torch.nn as nn
@@ -15,6 +16,12 @@ def init_weight(m):
     elif isinstance(m, nn.LayerNorm):
         nn.init.constant_(m.bias, 0)
         nn.init.constant_(m.weight, 1.0)
+
+def _init_film_fc2_zero(m):
+    if hasattr(m, 'cond_proj') and hasattr(m.cond_proj, 'fc2'):
+        nn.init.zeros_(m.cond_proj.fc2.weight)
+        nn.init.zeros_(m.cond_proj.fc2.bias)
+
 
 class FiLM_layer(nn.Module):
     def __init__(self, input_dim: int, cond_dim: int,):
@@ -53,15 +60,15 @@ class FourierPositionalEncoding1D(nn.Module):
 
 class LatentDynamics(nn.Module):
 
-    def __init__(self, proprio_dim, vl_dim, hidden_dim, p_goal_dim, action_dim, num_latents=4, action_noise=True,
-                 num_p_tokens=8, num_v_tokens=8, num_a_tokens=4):
+    def __init__(self, proprio_dim, vl_dim, hidden_dim, p_goal_dim, action_dim, num_latents=2, action_noise=True,
+                 num_p_tokens=8, num_v_tokens=8, num_a_tokens=1):
         super().__init__()
         self.proprio_dim = proprio_dim
         self.action_dim = action_dim
         self.action_drop_prob = 0.1
         self.action_noise = action_noise
-        self.latent_query = nn.Parameter(torch.randn(1, num_latents, hidden_dim))
-        self.output_query = nn.Parameter(torch.randn(1, 1, hidden_dim))
+        self.latent_query = nn.Parameter(torch.randn(1, num_latents, p_goal_dim))
+        self.output_query = nn.Parameter(torch.randn(1, 1, p_goal_dim))
         self.num_v_tokens = num_v_tokens
         self.num_p_tokens = num_p_tokens
         self.num_a_tokens = num_a_tokens
@@ -72,176 +79,178 @@ class LatentDynamics(nn.Module):
         self.w_align = 1.0
         # TODO cross-attention 활용
         self.proprio_encoder = FilmMLP(input_dim=proprio_dim, cond_dim=vl_dim, output_size=p_goal_dim)
+        # self.proprio_encoder = MlpResNet(num_blocks=3, input_dim=proprio_dim, hidden_dim=hidden_dim, output_size=hidden_dim)
         self.vision_encoder = FilmMLP(input_dim=vl_dim, cond_dim=vl_dim, output_size=p_goal_dim)  # input_dim=vl_dim * 2 if double-view
-        self.action_encoder = MlpResNet(num_blocks=3, input_dim=action_dim, hidden_dim=hidden_dim, output_size=hidden_dim)
+        # self.vision_encoder = MlpResNet(num_blocks=3, input_dim=vl_dim, hidden_dim=hidden_dim, output_size=hidden_dim)
+        self.action_encoder = MlpResNet(num_blocks=3, input_dim=action_dim, hidden_dim=hidden_dim, output_size=p_goal_dim)
 
-        # Tokenizers
-        self.proprio_tokenizer = nn.Linear(p_goal_dim, num_p_tokens * hidden_dim)
-        self.vision_tokenizer = nn.Linear(p_goal_dim, num_v_tokens * hidden_dim)
-        # self.action_tokenizer = nn.Linear(hidden_dim, num_a_tokens * hidden_dim)
-        self.p_token_ln = nn.LayerNorm(hidden_dim)
-        self.v_token_ln = nn.LayerNorm(hidden_dim)
-        self.a_token_ln = nn.LayerNorm(hidden_dim)
-
-        self.token_dropout = nn.Dropout(0.1)
-
-        self.ff_pos_p = FourierPositionalEncoding1D(num_bands=6, out_dim=hidden_dim)
-        self.ff_pos_v = FourierPositionalEncoding1D(num_bands=6, out_dim=hidden_dim)
-        self.ff_pos_a = FourierPositionalEncoding1D(num_bands=6, out_dim=hidden_dim)
-
-        self.register_buffer('p_pos', torch.linspace(0, 1, steps=num_p_tokens).unsqueeze(0), persistent=False)  # [1, Np]
-        self.register_buffer('v_pos', torch.linspace(0, 1, steps=num_v_tokens).unsqueeze(0), persistent=False)  # [1, Nv]
-        self.register_buffer('a_pos', torch.linspace(0, 1, steps=num_a_tokens).unsqueeze(0), persistent=False)
-        self.mod_embed = nn.Parameter(torch.randn(3, hidden_dim))
-
-        # Projection head for contrastive branch (SimCLR-style)
-        # self.proj_head = nn.Sequential(
-        #     nn.Linear(hidden_dim, hidden_dim),
-        #     nn.GELU(),
-        #     nn.LayerNorm(hidden_dim),
-        #     nn.Linear(hidden_dim, hidden_dim)
-        # )
-
+        self.p_ln = nn.LayerNorm(p_goal_dim)
+        self.v_ln = nn.LayerNorm(p_goal_dim)
+        self.a_ln = nn.LayerNorm(p_goal_dim)
+        self.time_pe = FourierPositionalEncoding1D(num_bands=4, out_dim=p_goal_dim, include_input=True)
         # ik solver
         # ---------------------- FiLM ik ----------------------
         # self.vision_ik = FilmMLP(input_dim=hidden_dim, cond_dim=hidden_dim, output_size=hidden_dim)
         # self.proprio_ik = FilmMLP(input_dim=hidden_dim, cond_dim=hidden_dim, output_size=hidden_dim)
 
         # ----------------- Cross-attention ik -----------------
-        self.proprio_ik = CrossAttnBlock(embed_dim=hidden_dim,
-                                         dim_feedforward=hidden_dim * 4,
-                                         num_heads=4,
+        self.proprio_ik = CrossAttnBlock(embed_dim=p_goal_dim,
+                                         dim_feedforward=p_goal_dim * 4,
+                                         num_heads=8,
                                          num_layers=2,
                                          drop_out_rate=0.1)
-        self.vision_ik = CrossAttnBlock(embed_dim=hidden_dim,
-                                        dim_feedforward=hidden_dim * 4,
-                                        num_heads=4,
+        self.vision_ik = CrossAttnBlock(embed_dim=p_goal_dim,
+                                        dim_feedforward=p_goal_dim * 4,
+                                        num_heads=8,
                                         num_layers=2,
                                         drop_out_rate=0.1)
 
-        self.latent_ik = CrossAttnBlock(embed_dim=hidden_dim,
-                                         dim_feedforward=hidden_dim * 4,
-                                         num_heads=4,
-                                         num_layers=2,
-                                         drop_out_rate=0.1)
-        self.latent_emb = CrossAttnBlock(embed_dim=hidden_dim,
-                                        dim_feedforward=hidden_dim * 2,
-                                        num_heads=4,
-                                        num_layers=1,
+        self.latent_ik = CrossAttnBlock(embed_dim=p_goal_dim,
+                                        dim_feedforward=p_goal_dim * 4,
+                                        num_heads=8,
+                                        num_layers=3,
                                         drop_out_rate=0.1)
+        self.latent_emb = CrossAttnBlock(embed_dim=p_goal_dim,
+                                         dim_feedforward=p_goal_dim * 2,
+                                         num_heads=4,
+                                         num_layers=1,
+                                         drop_out_rate=0.1)
 
-        self.delta_head = nn.Sequential(
-            nn.Linear(hidden_dim + p_goal_dim, hidden_dim * 4),
+        self.proj_latent = nn.Sequential(nn.Linear(p_goal_dim, p_goal_dim), nn.GELU(), nn.Linear(p_goal_dim, p_goal_dim))
+
+        self.pred_shared = nn.Sequential(
+            nn.Linear(p_goal_dim, p_goal_dim * 4),
             nn.GELU(),
-            nn.LayerNorm(hidden_dim * 4),
-            nn.Linear(hidden_dim * 4, p_goal_dim),
+            nn.LayerNorm(p_goal_dim * 4),
         )
+        self.pred_proprio_head = nn.Linear(p_goal_dim * 4, p_goal_dim)
+        self.pred_vision_head = nn.Linear(hidden_dim * 4, p_goal_dim)
+
         self.apply(init_weight)
+        self.apply(_init_film_fc2_zero)
+
+        # EMA target encoder for stable targets
+        # self.m_ema = 0.99
+        # self._ema_initialized = False
+        self.proprio_encoder_target = copy.deepcopy(self.proprio_encoder)
+        for p in self.proprio_encoder_target.parameters():
+            p.requires_grad = False
+        self.vision_encoder_target = copy.deepcopy(self.vision_encoder)
+        for p in self.vision_encoder_target.parameters():
+            p.requires_grad = False
+
 
     def forward(self, img_history, p_history, subgoal, prev_action, p_next=None, v_next=None):
         B = p_history.shape[0]
 
-        # if self.training:
-        #     if torch.rand(()) < self.action_drop_prob:
-        #         prev_action = torch.zeros_like(prev_action)
-        #     elif self.action_noise:
-        #         prev_action = prev_action + 0.01 * torch.randn_like(prev_action)
+        if self.training:
+            # Action augmentation before encoding
+            prob = torch.rand((), device=prev_action.device)
+            if (self.action_drop_prob is not None) and (self.action_drop_prob > 0.0) and (prob < self.action_drop_prob):
+                prev_action = torch.zeros_like(prev_action)
+            elif self.action_noise:
+                prev_action = prev_action + 0.01 * torch.randn_like(prev_action)
 
-        p_prev = p_history[:, 0]    # [B, P]
-        p_curr = p_history[:, -1]   # [B, P]
-        v_prev = img_history[:, 0]        # [B, Dv]
-        v_curr = img_history[:, -1]       # [B, Dv]
+        p_prev_raw = p_history[:, 0]    # [B, P]
+        p_curr_raw = p_history[:, -1]   # [B, P]
+        v_prev_raw = img_history[:, 0]        # [B, Dv]
+        v_curr_raw = img_history[:, -1]       # [B, Dv]
 
         # Encode with FiLM-MLP conditioned on language
-        p_prev = self.proprio_encoder(p_prev, subgoal)   # [B, H]
-        p_curr = self.proprio_encoder(p_curr, subgoal)   # [B, H]
-        v_prev = self.vision_encoder(v_prev, subgoal)    # [B, H]
-        v_curr = self.vision_encoder(v_curr, subgoal)    # [B, H]
-        # a_prev = self.action_encoder(prev_action, subgoal)  # [B, H]
+        p_prev = self.proprio_encoder(p_prev_raw, subgoal)   # [B, H]
+        p_curr = self.proprio_encoder(p_curr_raw, subgoal)   # [B, H]
+        v_prev = self.vision_encoder(v_prev_raw, subgoal)    # [B, H]
+        v_curr = self.vision_encoder(v_curr_raw, subgoal)    # [B, H]
+
         a_prev = self.action_encoder(prev_action)  # [B, H]
-        delta_p = p_curr - p_prev                       # [B, H]
-        delta_v = v_curr - v_prev                       # [B, H]
-
-        p_tokens = self.proprio_tokenizer(delta_p).view(B, self.num_p_tokens, -1)  # [B, Np, D]
-        v_tokens = self.vision_tokenizer(delta_v).view(B, self.num_v_tokens, -1)  # [B, Nv, D]
-
-        p_tokens = self.p_token_ln(p_tokens)
-        v_tokens = self.v_token_ln(v_tokens)
-
-        p_pos = self.ff_pos_p(self.p_pos.expand(B, -1))  # [B, Np, H]
-        v_pos = self.ff_pos_v(self.v_pos.expand(B, -1))  # [B, Nv, H]
-
-        p_tokens = p_tokens + p_pos + self.mod_embed[0]
-        v_tokens = v_tokens + v_pos + self.mod_embed[1]
-
-        p_tokens = self.token_dropout(p_tokens)
-        v_tokens = self.token_dropout(v_tokens)
-
-        # a_tokens = self.action_tokenizer(a_prev).view(B, self.num_a_tokens, -1)  # [B, Na, D]
-        # a_tokens = self.a_token_ln(a_tokens)
-        # a_pos = self.ff_pos_a(self.a_pos.expand(B, -1))  # [B, Na, H]
-        # a_tokens = a_tokens + a_pos + self.mod_embed[2]
-        # a_tokens = self.token_dropout(a_tokens)
+        # delta_p = p_curr - p_prev                       # [B, H]
+        # delta_v = v_curr - v_prev                       # [B, H]
 
         # ik for each modality
         # 1) FiLM
-        # p_ik = self.proprio_ik(p_tokens, a_prev)  # [B, Np, D]
-        # v_ik = self.vision_ik(v_tokens, a_prev)  # [B, Nv, D]
-
+        # a_t = self.a_ln(a_prev)
         # 2) Cross-attention
-        # p_ik = self.proprio_ik(p_tokens, a_tokens)  # [B, Np, D]
-        # v_ik = self.vision_ik(v_tokens, a_tokens)  # [B, Nv, D]
-        p_ik = self.proprio_ik(p_tokens, a_prev.unsqueeze(1))  # [B, Np, D]
-        v_ik = self.vision_ik(v_tokens, a_prev.unsqueeze(1))  # [B, Nv, D]
+        a_t = self.a_ln(a_prev.unsqueeze(1))
+        p_prev_t = self.p_ln(p_prev.unsqueeze(1))
+        p_curr_t = self.p_ln(p_curr.unsqueeze(1))
+        v_prev_t = self.v_ln(v_prev.unsqueeze(1))
+        v_curr_t = self.v_ln(v_curr.unsqueeze(1))
+        p_delta_t = self.p_ln((p_curr - p_prev).unsqueeze(1))
+        v_delta_t = self.v_ln((v_curr - v_prev).unsqueeze(1))
+
+        t_pos = torch.tensor([0.0, 1.0], device=p_history.device).unsqueeze(0).repeat(B, 1)  # [B,2]
+        pos = self.time_pe(t_pos)  # [B,2,D]
+        p_prev_t = p_prev_t + pos[:, 0:1, :]
+        p_curr_t = p_curr_t + pos[:, 1:2, :]
+        v_prev_t = v_prev_t + pos[:, 0:1, :]
+        v_curr_t = v_curr_t + pos[:, 1:2, :]
+        pos_delta = self.time_pe(torch.full((B, 1), 0.5, device=p_history.device))  # [B,1,D]
+        p_delta_t = p_delta_t + pos_delta
+        v_delta_t = v_delta_t + pos_delta
+
+        p_kv = torch.cat([p_prev_t, p_curr_t, p_delta_t], dim=1)  # [B,3,D]
+        v_kv = torch.cat([v_prev_t, v_curr_t, v_delta_t], dim=1)  # [B,3,D]
+
+        # if self.training and (self.kv_mask_prob is not None) and (self.kv_mask_prob > 0.0):
+        #     mask_sel = torch.rand(B, device=p_kv.device) < self.kv_mask_prob
+        #
+        # if mask_sel.any():
+        #     to_drop = torch.randint(0, 3, (int(mask_sel.sum().item()),), device=p_kv.device)
+        #     bidx = mask_sel.nonzero(as_tuple=False).squeeze(1)
+        #     p_kv[bidx, to_drop, :] = 0.0
+        #     v_kv[bidx, to_drop, :] = 0.0
+
+        p_ik = self.proprio_ik(a_t, p_kv)
+        v_ik = self.vision_ik(a_t, v_kv)
+
+        # z_p_ik = self.proj_latent(p_ik)
+        # z_v_ik = self.proj_latent(v_ik)
 
         # Perceiver-IO: Q = learned latent array; KV = [pl_tokens, vl_tokens]
         # TODO q_latents 와 q_out 의 의미?
-        q_latents = repeat(self.latent_query, '1 n d -> b n d', b=B)  # [B, L, H]
-        q_out = repeat(self.output_query, '1 p d -> b p d', b=B)     # [B, 1, H]
-        kv_token = torch.cat([p_ik, v_ik], dim=1)  # [B, 2*Na, D]
+        q_latents = repeat(self.latent_query, '1 n d -> b n d', b=B)  # [B, L, D]
+        q_out = repeat(self.output_query, '1 p d -> b p d', b=B)     # [B, 1, D]
+        kv_token = torch.cat([p_ik, v_ik], dim=1)  # [B, 2, D]
 
         # Extract latent ik
-        latent_ik = self.latent_ik(q_latents, kv_token)
-        latent_ik = self.latent_emb(q_out, latent_ik).squeeze(1)  # [B, H]
+        latent_ik = self.latent_ik(q_latents, kv_token)            # [B, L, D]
+        latent_ik = self.latent_emb(q_out, latent_ik)   # [B, D]
 
-        # Predict Δproprio // t (Δp' | Δp) => Δp' = f(t, Δp)
-        delta_p_sg = (p_curr - p_prev).detach()
-        rollout = torch.cat([latent_ik, delta_p_sg], dim=-1)
-        delta_p_next = self.delta_head(rollout)
-        pred_p_next = p_curr.detach() + delta_p_next
+        # Predict proprio_emb // t (p' | p) => p' = f(t, p)
+        rollout = torch.cat([latent_ik, p_kv.detach()], dim=1)
+        pred_p_next = self.pred_proprio_head(self.pred_shared(rollout)).mean(1)  # [B, D]
+        # pred_p_next = p_curr.detach() + pred_delta_p
 
-        # rollout_v = torch.cat([latent_ik, delta_v], dim=-1)
-        # delta_v_next = self.delta_head(rollout_v)
-        # pred_v_next = v_curr.detach() + delta_v_next
+        rollout_v = torch.cat([latent_ik, v_kv.detach()], dim=1)
+        pred_v_next = self.pred_vision_head(self.pred_shared(rollout_v)).mean(1)
 
         # ---------------- Representation losses ------------------ #
         if self.training:
             loss_dict = {}
-            # 1-1) InfoNCE between token sets
-            # loss_nce = self._info_nce_set2set(p_ik, v_ik, tau=self.tau)
-            # loss_dict['loss_nce'] = loss_nce
-            # 1-2) SimCLR-style contrastive loss on pooled tokens
-            # p_ik_proj = p_ik.mean(1)
-            # v_ik_proj = v_ik.mean(1)
-            # p_ik_proj = self.proj_head(p_ik.mean(1))
-            # v_ik_proj = self.proj_head(v_ik.mean(1))
-            # loss_simclr = self._simclr_loss(p_ik_proj, v_ik_proj, tau=self.tau)
-            # loss_simclr_p = self._simclr_loss(latent_ik, p_ik_proj, tau=self.tau)
-            # loss_simclr_v = self._simclr_loss(latent_ik, v_ik_proj, tau=self.tau)
-            # loss_dict['loss_simclr'] = loss_simclr
-
-            # 2) Latent alignment: cosine alignment between latent_ik and detached p/v means (scale-invariant)
-            # loss_align = self._cosine_align(p_ik_proj, v_ik_proj)
-            # loss_dict['loss_align'] = loss_align
-
+            # Initialize and EMA update for target encoder
+            # if not self._ema_initialized:
+            #     self.proprio_encoder_target.load_state_dict(self.proprio_encoder.state_dict())
+            #     self.vision_encoder_target.load_state_dict(self.vision_encoder.state_dict())
+            #     self._ema_initialized = True
+            # self._momentum_update_target(self.proprio_encoder_target, self.proprio_encoder, self.m_ema)
+            # self._momentum_update_target(self.vision_encoder_target, self.vision_encoder, self.m_ema)
             with torch.no_grad():
-                p_next_gt = self.proprio_encoder(p_next, subgoal)
-                # v_next_gt = self.vision_encoder(v_next, subgoal)
+                target_p_next = self.proprio_encoder_target(p_next, subgoal)
+                # target_p_curr = self.proprio_encoder_target(p_curr_raw, subgoal)
+                # target_delta_p = target_p_next - target_p_curr
+                target_v_next = self.vision_encoder_target(v_next, subgoal)
 
-            loss_delta = F.smooth_l1_loss(pred_p_next, p_next_gt)
-            loss_dict['loss_delta_p'] = loss_delta
-            # loss_delta_v = F.smooth_l1_loss(pred_v_next, v_next_gt)
-            # loss_dict['loss_delta_v'] = loss_delta_v
+            loss_p_emb = F.smooth_l1_loss(pred_p_next, target_p_next)
+            loss_dict['loss_p'] = loss_p_emb
+
+            loss_v_emb = F.smooth_l1_loss(pred_v_next, target_v_next)
+            loss_dict['loss_v'] = loss_v_emb
+
+            # loss_align = self._simclr_loss(p_ik.squeeze(1), v_ik.squeeze(1), tau=self.tau)
+            # loss_dict['loss_latent_align'] = loss_align
+
+            # loss_set2set = self._info_nce_set2set(p_ik.squeeze(1), v_ik.squeeze(1), tau=self.tau)
+            # loss_dict['loss_slatent_align'] = loss_set2set
 
             return pred_p_next, loss_dict
 
@@ -301,3 +310,8 @@ class LatentDynamics(nn.Module):
         B = a.shape[0]
         labels = torch.arange(B, device=a.device)
         return 0.5 * (F.cross_entropy(logits, labels) + F.cross_entropy(logits.t(), labels))
+
+    def _momentum_update_target(self, target, online, m: float = 0.99):
+        with torch.no_grad():
+            for p_t, p_o in zip(target.parameters(), online.parameters()):
+                p_t.data.mul_(m).add_(p_o.data, alpha=1.0 - m)

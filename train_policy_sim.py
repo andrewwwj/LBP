@@ -113,8 +113,12 @@ def train(config, logger, model, train_loader, optimizer, lr_scheduler):
         # calculate loss and update model
         loss, loss_metric = model(**batch)
         optimizer.zero_grad()
+        # base_model = model.module.unwrap() if config['use_ddp'] else model.unwrap()
+        # for m in base_model.modules():
+        #     if hasattr(m, 'update_ema') and callable(getattr(m, 'update_ema')):
+        #         m.update_ema()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         lr_scheduler.step()
         loss_recod.update(loss.item())
